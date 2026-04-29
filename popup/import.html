@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Import Models</title>
+  <link rel="stylesheet" href="import.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>Import Models JSON</h1>
+    <p class="hint">Select a previously exported file with models list.</p>
+
+    <input id="fileInput" type="file" accept=".json,application/json">
+    <button id="importBtn" type="button">Import File</button>
+    <p id="status" class="status"></p>
+  </main>
+
+  <script src="../shared/sites.js"></script>
+  <script src="import.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+
+    <div id="controls">
+      <button id="importBtn" title="Import models"></button>
+      <button id="exportBtn" title="Export models"></button>
+      <button id="addModelBtn" title="Add model"></button>
+      <button id="refreshBtn" title="Refresh status"></button>
+    </div>
+
+    <div id="models"></div>
+    <div id="previewPlayer" aria-hidden="true">
+      <canvas width="294" height="166"></canvas>
+    </div>
+
+  </div>
+
+  <script src="../shared/sites.js"></script>
+  <script src="../imageplayer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

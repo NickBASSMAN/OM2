@@ -1,0 +1,343 @@
+body {
+  margin: 0;
+  padding: 8px;
+  font-family: Arial, sans-serif;
+  width: 300px;
+  background: #111;
+  color: #fff;
+}
+
+body.waiting {
+  cursor: wait;
+}
+
+#app {
+  position: relative;
+}
+
+/* === BUTTON === */
+
+#controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+#addModelBtn {
+  --button-rotation: 0deg;
+  --button-scale: 1;
+  width: 28px;
+  height: 28px;
+
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  background-color: #222;
+
+  background-image: url("../icons/pbuttons.png");
+  background-repeat: no-repeat;
+
+  /* 🔴 КЛЮЧОВЕ: піджени під свій sprite */
+  background-size: 280px auto;
+
+  /* перша іконка */
+  background-position: 2px 0;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  transform: rotate(var(--button-rotation)) scale(var(--button-scale));
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease,
+    transform 90ms ease;
+}
+
+#addModelBtn:hover,
+#importBtn:hover,
+#exportBtn:hover,
+#refreshBtn:hover {
+  background-color: #333;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+  filter: brightness(1.08);
+  --button-scale: 1.06;
+}
+
+#addModelBtn:active,
+#importBtn:active,
+#exportBtn:active,
+#refreshBtn:active,
+.deleteBtn:active {
+  animation: buttonPress 160ms ease-out;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45);
+  filter: brightness(0.92);
+  --button-scale: 0.9;
+}
+
+#importBtn,
+#exportBtn,
+#refreshBtn {
+  --button-rotation: 0deg;
+  --button-scale: 1;
+  width: 28px;
+  height: 28px;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  background-color: #222;
+  background-repeat: no-repeat;
+  background-size: 280px auto;
+  background-position: center;
+  margin-left: 4px;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  transform: rotate(var(--button-rotation)) scale(var(--button-scale));
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease,
+    transform 90ms ease;
+}
+
+#importBtn {
+  background-image: url("../icons/corner.gif");
+  background-size: 16px 16px;
+}
+
+#exportBtn {
+  background-image: url("../icons/corner.gif");
+  background-size: 16px 16px;
+  --button-rotation: 180deg;
+}
+
+#refreshBtn {
+  background-image: url("../icons/pbuttons.png");
+  background-size: 280px auto;
+  background-position: -24px 0;
+}
+
+#refreshBtn:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  animation: refreshPulse 700ms ease-in-out infinite;
+}
+
+/* === DELETE BUTTON === */
+
+.deleteBtn {
+  --button-scale: 1;
+  width: 28px;
+  height: 28px;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  background-color: transparent;
+  background-image: url("../icons/sites.png");
+  background-repeat: no-repeat;
+  background-size: 224px 28px;
+  background-position: -28px 0;
+  opacity: 0.7;
+  flex-shrink: 0;
+  transform: scale(var(--button-scale));
+  transition:
+    background-color 120ms ease,
+    filter 120ms ease,
+    opacity 120ms ease,
+    transform 90ms ease;
+}
+
+.deleteBtn:hover {
+  opacity: 1;
+  background-color: rgba(255, 0, 0, 0.1);
+  filter: brightness(1.12);
+  --button-scale: 1.08;
+}
+
+@keyframes buttonPress {
+  0% {
+    transform: rotate(var(--button-rotation, 0deg)) scale(1);
+  }
+  45% {
+    transform: rotate(var(--button-rotation, 0deg)) scale(0.88);
+  }
+  100% {
+    transform: rotate(var(--button-rotation, 0deg)) scale(var(--button-scale, 1));
+  }
+}
+
+@keyframes refreshPulse {
+  0%,
+  100% {
+    filter: brightness(0.95);
+    transform: rotate(var(--button-rotation, 0deg)) scale(1);
+  }
+  50% {
+    filter: brightness(1.22);
+    transform: rotate(var(--button-rotation, 0deg)) scale(1.08);
+  }
+}
+
+/* === LIST === */
+
+.model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  justify-content: space-between;
+}
+
+.model + .model {
+  border-top: 2px solid rgba(255, 255, 255, 0.504);
+}
+
+.model:hover {
+  background: #1e1e1e;
+}
+
+.thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #000;
+}
+
+.thumbWrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  transition:
+    width 140ms ease,
+    height 140ms ease;
+}
+
+.thumbWrap.previewEnabled {
+  cursor: zoom-in;
+}
+
+.model:hover .thumbWrap {
+  width: 48px;
+  height: 48px;
+}
+
+.thumbPrivateOverlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: rgba(255, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.thumbPasswordOverlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 32, 32, 0.95) 0 5px,
+      transparent 5px 13px
+    );
+}
+
+.info {
+  flex: 1;
+}
+
+.name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.privateName {
+  color: #ff4d4d;
+}
+
+.siteIcon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  background-image: url("../icons/sites.png");
+  background-repeat: no-repeat;
+  background-size: 112px 14px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  box-sizing: border-box;
+  opacity: 0.9;
+}
+
+.siteIconOnline {
+  border-color: #4caf50;
+  box-shadow: 0 0 0 1px rgba(76, 175, 80, 0.28);
+}
+
+.siteIconBusy {
+  border-color: #f44336;
+  box-shadow: 0 0 0 1px rgba(244, 67, 54, 0.28);
+}
+
+.siteIcon-chaturbate {
+  background-position: -98px 0;
+}
+
+.siteIcon-stripchat {
+  background-position: -84px 0;
+}
+
+.siteIcon-bongacams {
+  background-position: -70px 0;
+}
+
+.status {
+  font-size: 11px;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.streamTime {
+  font-size: 11px;
+  color: #b7b7b7;
+  white-space: nowrap;
+}
+
+.online {
+  color: #4caf50;
+}
+
+.offline {
+  color: #f44336;
+}
+
+.password {
+  color: #ff9800;
+}
+
+#previewPlayer {
+  position: fixed;
+  z-index: 20;
+  display: none;
+  overflow: hidden;
+  width: 294px;
+  min-height: 44px;
+  border: 1px solid #000;
+  border-radius: 4px;
+  background: #111;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+
+#previewPlayer canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}

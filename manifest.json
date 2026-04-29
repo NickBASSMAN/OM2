@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Online Modeli",
+  "version": "1.0",
+  "description": "Track and display online status of models from supported sites.",
+
+  "icons": {
+    "16": "icons/icon19.png",
+    "48": "icons/icon48.png",
+    "64": "icons/icon64.png",
+    "128": "icons/icon128.png"
+  },
+
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "downloads"
+  ],
+
+  "host_permissions": [
+    "*://*.chaturbate.com/*",
+    "*://*.mmcdn.com/*",
+    "*://*.bongacams.com/*",
+    "*://*.stripchat.com/*"
+  ],
+
+  "background": {
+    "scripts": [
+      "shared/sites.js",
+      "sites/background-adapters.js",
+      "background.js"
+    ]
+  },
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Online Modeli",
+    "default_icon": {
+      "16": "icons/icon19.png",
+      "48": "icons/icon48.png"
+    }
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.chaturbate.com/*",
+        "*://*.bongacams.com/*",
+        "*://*.stripchat.com/*"
+      ],
+      "js": [
+        "shared/sites.js",
+        "content/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
