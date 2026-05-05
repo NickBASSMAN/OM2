@@ -5,52 +5,24 @@
     parseModelFromUrl,
     toFiniteCount
   } = globalThis.OnlineModeli.sites;
+  const chaturbateApi = globalThis.OnlineModeli.chaturbateApi || {};
 
   console.log("Online Modeli content script loaded");
 
   async function getChaturbateModelDataFromAPI(username) {
-    const apiUrl = "https://chaturbate.com/api/ts/roomlist/room-list/";
-    const limit = 100;
-    let offset = 0;
-    let total = Infinity;
+    if (!chaturbateApi.fetchModelStatus) return null;
 
-    while (offset < total) {
-      const url = `${apiUrl}?limit=${limit}&offset=${offset}`;
-
-      try {
-        const res = await fetch(url, { credentials: "include" });
-        if (!res.ok) break;
-
-        const data = await res.json();
-        const rooms = Array.isArray(data?.rooms) ? data.rooms : [];
-        total = toFiniteCount(data?.total_count, rooms.length);
-
-        const room = rooms.find((item) => item.username === username);
-        if (room) {
-          return {
-            site: "chaturbate",
-            username: room.username,
-            online: true,
-            thumbnailUrl: room.img || "",
-            previewUrl: buildChaturbateJpegPreviewUrl(room.username),
-            showType: room.current_show || "public",
-            roomStatus: room.current_show || "public",
-            startDtUtc: room.start_dt_utc || null,
-            startTimestamp: room.start_timestamp || null,
-            ...(room.num_users !== undefined && room.num_users !== null
-              ? { viewers: toFiniteCount(room.num_users, 0) }
-              : {})
-          };
-        }
-
-        offset += limit;
-      } catch (error) {
-        console.error("Error fetching from Chaturbate API:", error);
-        break;
-      }
+    try {
+      const status = await chaturbateApi.fetchModelStatus(username);
+      return {
+        site: "chaturbate",
+        username,
+        ...status
+      };
+    } catch (error) {
+      console.error("Error fetching from Chaturbate API:", error);
+      return null;
     }
-
-    return null;
   }
 
   async function getBongaModelDataFromAPI(username) {

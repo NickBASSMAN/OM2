@@ -1,9 +1,185 @@
 (function (global) {
+  const {
+    buildChaturbateJpegPreviewUrl,
+    resolveEffectiveShowType,
+    toFiniteCount
+  } = global.OnlineModeli.sites;
+
+  const CHATURBATE_API_URL = "https://chaturbate.com/api/ts/roomlist/room-list/";
+  const CHATURBATE_LIMIT = 100;
+
   const BONGA_MODELS_URL = "https://bongacams.com/tools/listing_v3.php";
   const BONGA_MODELS_LIMIT = 144;
   const BONGA_MAX_PAGES = 100;
 
   const roomCache = {};
+
+  function createOfflineStatus() {
+    return {
+      thumbnailUrl: "",
+      online: false,
+      viewers: 0,
+      showType: "offline",
+      roomStatus: "offline",
+      startDtUtc: null,
+      startTimestamp: null,
+      lastBroadcast: null,
+      timeSinceLastBroadcast: null
+    };
+  }
+
+  async function fetchChaturbateBioStatus(username) {
+    const url = `https://chaturbate.com/api/biocontext/${encodeURIComponent(username)}/?`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Biocontext request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const roomStatus = resolveEffectiveShowType(data?.code, data?.room_status);
+    const isOnline = roomStatus !== "offline";
+    const viewers = data?.num_users ?? data?.viewer_count ?? data?.viewers ?? data?.users_count;
+
+    const status = {
+      online: isOnline,
+      showType: roomStatus,
+      roomStatus,
+      lastBroadcast: data?.last_broadcast || null,
+      timeSinceLastBroadcast: data?.time_since_last_broadcast || null
+    };
+
+    if (viewers !== undefined && viewers !== null) {
+      status.viewers = toFiniteCount(viewers, 0);
+    }
+
+    return status;
+  }
+
+  function parseChaturbateRoomsResponse(payload) {
+    const rooms = Array.isArray(payload?.rooms)
+      ? payload.rooms
+      : (Array.isArray(payload?.rooms?.results) ? payload.rooms.results : []);
+
+    const onlineCount = toFiniteCount(
+      payload?.total_count ?? payload?.rooms?.total_count,
+      rooms.length
+    );
+
+    const allCountRaw = toFiniteCount(
+      payload?.all_rooms_count ?? payload?.rooms?.all_rooms_count,
+      onlineCount
+    );
+
+    return {
+      rooms,
+      onlineCount,
+      allCount: Math.max(allCountRaw, onlineCount)
+    };
+  }
+
+  async function fetchChaturbateRoomsPage(offset = 0, limit = CHATURBATE_LIMIT) {
+    const url = `${CHATURBATE_API_URL}?limit=${limit}&offset=${offset}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Room-list request failed with status ${response.status}`);
+    }
+
+    return parseChaturbateRoomsResponse(await response.json());
+  }
+
+  function getChaturbatePreviewUrl(roomOrUsername) {
+    const username = typeof roomOrUsername === "string"
+      ? roomOrUsername
+      : roomOrUsername?.username;
+    return buildChaturbateJpegPreviewUrl(username);
+  }
+
+  async function fetchOnlineChaturbateRoomByUsername(username) {
+    let offset = 0;
+    let onlineCount = Infinity;
+
+    while (offset < onlineCount) {
+      const page = await fetchChaturbateRoomsPage(offset, CHATURBATE_LIMIT);
+      onlineCount = page.onlineCount;
+
+      const room = page.rooms.find((item) => item.username === username);
+      if (room) return room;
+
+      offset += CHATURBATE_LIMIT;
+    }
+
+    return null;
+  }
+
+  async function fetchChaturbateModelStatus(username) {
+    try {
+      const bio = await fetchChaturbateBioStatus(username);
+      const room = bio.online ? await fetchOnlineChaturbateRoomByUsername(username) : null;
+      const roomOnline = room
+        ? (typeof room.is_online === "boolean"
+          ? room.is_online
+          : (typeof room.online === "boolean" ? room.online : true))
+        : bio.online;
+      const effectiveShowType = resolveEffectiveShowType(bio.roomStatus, room?.current_show);
+
+      const payload = {
+        thumbnailUrl: room?.img || "",
+        previewUrl: getChaturbatePreviewUrl(room),
+        online: roomOnline,
+        showType: effectiveShowType,
+        roomStatus: effectiveShowType,
+        startDtUtc: room?.start_dt_utc || null,
+        startTimestamp: room?.start_timestamp || null,
+        lastBroadcast: bio.lastBroadcast,
+        timeSinceLastBroadcast: bio.timeSinceLastBroadcast
+      };
+
+      if (roomOnline) {
+        const viewers = room?.num_users ?? bio.viewers;
+        if (viewers !== undefined && viewers !== null) {
+          payload.viewers = toFiniteCount(viewers, 0);
+        }
+      } else {
+        payload.viewers = 0;
+      }
+
+      return payload;
+    } catch (error) {
+      console.error("Error fetching Chaturbate model status:", error);
+      return createOfflineStatus();
+    }
+  }
+
+  async function buildChaturbateStatusFromRoom(username, room) {
+    const bio = await fetchChaturbateBioStatus(username);
+    const roomOnline = typeof room.is_online === "boolean"
+      ? room.is_online
+      : (typeof room.online === "boolean" ? room.online : true);
+    const effectiveShowType = resolveEffectiveShowType(bio.roomStatus, room.current_show);
+
+    const payload = {
+      thumbnailUrl: room.img || "",
+      previewUrl: getChaturbatePreviewUrl(room),
+      online: roomOnline,
+      showType: effectiveShowType,
+      roomStatus: effectiveShowType,
+      startDtUtc: room.start_dt_utc || null,
+      startTimestamp: room.start_timestamp || null,
+      lastBroadcast: bio.lastBroadcast,
+      timeSinceLastBroadcast: bio.timeSinceLastBroadcast
+    };
+
+    if (roomOnline) {
+      const viewers = room.num_users ?? bio.viewers;
+      if (viewers !== undefined && viewers !== null) {
+        payload.viewers = toFiniteCount(viewers, 0);
+      }
+    } else {
+      payload.viewers = 0;
+    }
+
+    return payload;
+  }
 
   function isCloudflareChallenge(text) {
     return (
@@ -192,6 +368,15 @@
 
   global.OnlineModeli = {
     ...(global.OnlineModeli || {}),
+    chaturbateApi: {
+      buildStatusFromRoom: buildChaturbateStatusFromRoom,
+      fetchBioStatus: fetchChaturbateBioStatus,
+      fetchModelStatus: fetchChaturbateModelStatus,
+      fetchOnlineRoomByUsername: fetchOnlineChaturbateRoomByUsername,
+      fetchRoomsPage: fetchChaturbateRoomsPage,
+      getPreviewUrl: getChaturbatePreviewUrl,
+      parseRoomsResponse: parseChaturbateRoomsResponse
+    },
     bongaApi: {
       buildPreviewUrl,
       fetchBongaModels,

@@ -53,6 +53,7 @@
       ],
       "js": [
         "shared/sites.js",
+        "core/api.js",
         "content/content.js"
       ],
       "run_at": "document_idle"
