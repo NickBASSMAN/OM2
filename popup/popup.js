@@ -149,7 +149,7 @@ function renderModel(model) {
   name.className = "name" + (isPrivate ? " privateName" : "");
 
   const username = document.createElement("span");
-  username.textContent = model.username;
+  username.textContent = getModelDisplayName(model);
   name.appendChild(username);
 
   const roomIcons = document.createElement("span");
@@ -220,6 +220,14 @@ function renderModel(model) {
   });
 
   container.appendChild(el);
+}
+
+function getModelDisplayName(model) {
+  if (model.site === "bongacams") {
+    return getCleanString(model.displayName) || model.username;
+  }
+
+  return model.username;
 }
 
 function getModelRooms(model) {

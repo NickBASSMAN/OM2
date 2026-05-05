@@ -2,7 +2,7 @@
 
 Browser extension for tracking selected cam models across supported sites.
 
-Current version: `0.2.2`
+Current version: `0.2.5`
 
 ## Status
 

@@ -214,7 +214,8 @@
       startTimestamp: overrides.startTimestamp || null,
       roomStatus,
       lastBroadcast: overrides.lastBroadcast || null,
-      timeSinceLastBroadcast: overrides.timeSinceLastBroadcast || null
+      timeSinceLastBroadcast: overrides.timeSinceLastBroadcast || null,
+      lastSeenOnlineAt: overrides.lastSeenOnlineAt || null
     };
   }
 
@@ -223,10 +224,14 @@
     const hasViewers = Object.prototype.hasOwnProperty.call(payload, "viewers");
     const online = hasOnline ? Boolean(payload.online) : Boolean(previousStatus.online);
     const previousViewers = toFiniteCount(previousStatus.viewers, 0);
+    const hasTimeSinceLastBroadcast = Object.prototype.hasOwnProperty.call(payload, "timeSinceLastBroadcast");
     const roomStatus = resolveEffectiveShowType(
       payload.roomStatus || payload.showType,
       payload.online ? "public" : (hasOnline ? "offline" : previousStatus.roomStatus || previousStatus.showType)
     );
+    const lastSeenOnlineAt = online
+      ? (payload.lastSeenOnlineAt || new Date().toISOString())
+      : (payload.lastSeenOnlineAt || previousStatus.lastSeenOnlineAt || null);
 
     return {
       ...previousStatus,
@@ -239,7 +244,10 @@
       startDtUtc: payload.startDtUtc || previousStatus.startDtUtc || null,
       startTimestamp: payload.startTimestamp || previousStatus.startTimestamp || null,
       lastBroadcast: payload.lastBroadcast || previousStatus.lastBroadcast || null,
-      timeSinceLastBroadcast: payload.timeSinceLastBroadcast || previousStatus.timeSinceLastBroadcast || null
+      timeSinceLastBroadcast: hasTimeSinceLastBroadcast
+        ? payload.timeSinceLastBroadcast
+        : (online ? null : previousStatus.timeSinceLastBroadcast || null),
+      lastSeenOnlineAt
     };
   }
 

@@ -12,8 +12,6 @@
   const BONGA_MODELS_LIMIT = 144;
   const BONGA_MAX_PAGES = 100;
 
-  const roomCache = {};
-
   function createOfflineStatus() {
     return {
       thumbnailUrl: "",
@@ -221,11 +219,12 @@
 
     return data.models.map((model) => {
       const username = model.username || "";
+      const displayName = model.display_name || username;
       const normalized = {
         id: username,
         username,
         name: username,
-        displayName: username,
+        displayName,
         online: true,
         viewers: Number(model.viewers) || 0,
         status: mapRoomStatus(model.room),
@@ -333,11 +332,7 @@
     return fetchBongaModels({ usernames });
   }
 
-  async function fetchBongaRoomData(username) {
-    if (roomCache[username]) {
-      return roomCache[username];
-    }
-
+  async function fetchBongaRoomDetails(username) {
     const body = new URLSearchParams();
     body.append("method", "getRoomData");
     body.append("args[]", username);
@@ -357,13 +352,21 @@
     });
 
     const json = await response.json();
-
-    if (json?.performerData?.sessionTs) {
-      roomCache[username] = json.performerData.sessionTs;
-      return roomCache[username];
+    if (json?.status !== "success" || !json?.performerData) {
+      throw new Error("No performerData");
     }
 
-    throw new Error("No sessionTs");
+    return json;
+  }
+
+  async function fetchBongaRoomData(username) {
+    const json = await fetchBongaRoomDetails(username);
+
+    if (!json?.performerData?.sessionTs) {
+      throw new Error("No sessionTs");
+    }
+
+    return json.performerData.sessionTs;
   }
 
   global.OnlineModeli = {
@@ -383,6 +386,7 @@
       fetchBongaModelsByUsernames,
       fetchBongaModelsPage,
       fetchBongaRoomData,
+      fetchBongaRoomDetails,
       normalizeBongaModelsResponse
     }
   };

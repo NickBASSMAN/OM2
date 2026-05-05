@@ -164,6 +164,17 @@
     }
   }
 
+  async function fetchBongaRoomDetails(username) {
+    if (!bongaApi.fetchBongaRoomDetails) return null;
+
+    try {
+      return await bongaApi.fetchBongaRoomDetails(username);
+    } catch (error) {
+      console.error("BongaCams room details update failed for model", username, error);
+      return null;
+    }
+  }
+
   async function fetchBongaRoomsForUsernames(usernames) {
     if (bongaApi.fetchBongaModelsByUsernames) {
       return bongaApi.fetchBongaModelsByUsernames(usernames);
@@ -176,9 +187,49 @@
     return [];
   }
 
-  async function buildBongaPayload(room) {
+  function formatBongaLastSeenAgo(isoString) {
+    const timestamp = Date.parse(isoString);
+    if (!Number.isFinite(timestamp)) return null;
+
+    const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+    if (minutes < 1) return "щойно";
+    if (minutes < 60) return `${minutes} хв тому`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} год тому`;
+
+    const days = Math.floor(hours / 24);
+    return `${days} дн тому`;
+  }
+
+  function buildBongaAvatarUrl(path) {
+    if (!path) return "";
+    if (/^https?:\/\//i.test(path)) return path;
+    return `https://i.bgicdn.com${String(path).startsWith("/") ? "" : "/"}${path}`;
+  }
+
+  function buildOfflineBongaPayload(previousStatus = {}, roomDetails = null) {
+    const performer = roomDetails?.performerData || {};
+    const sessionTs = performer.sessionTs || null;
+    const lastSeenOnlineAt = sessionTs
+      ? new Date(sessionTs * 1000).toISOString()
+      : (previousStatus.lastSeenOnlineAt || (previousStatus.online ? new Date().toISOString() : null));
+
+    return {
+      ...createOfflineStatus(),
+      thumbnailUrl: buildBongaAvatarUrl(performer.avatarUrl120 || performer.avatarUrl90 || performer.avatarUrlMedium || performer.avatarUrl),
+      displayName: performer.displayName || performer.username || "",
+      lastBroadcast: lastSeenOnlineAt || previousStatus.lastBroadcast || null,
+      startTimestamp: sessionTs,
+      lastSeenOnlineAt,
+      timeSinceLastBroadcast: lastSeenOnlineAt ? formatBongaLastSeenAgo(lastSeenOnlineAt) : null
+    };
+  }
+
+  async function buildBongaPayload(room, previousStatus = {}, username = "") {
     if (!room) {
-      return createOfflineStatus();
+      const roomDetails = await fetchBongaRoomDetails(username);
+      return buildOfflineBongaPayload(previousStatus, roomDetails);
     }
 
     const roomStatus = normalizeBongaRoomStatus(room.status);
@@ -187,11 +238,15 @@
     return {
       thumbnailUrl: room.thumbnail || "",
       previewUrl: room.previewUrl || bongaApi.buildPreviewUrl?.(room) || "",
+      displayName: room.displayName || room.name || room.username || room.id || "",
       online: true,
       viewers: toFiniteCount(room.viewers, 0),
       showType: roomStatus,
       roomStatus,
       startTimestamp: sessionTs || null,
+      lastBroadcast: null,
+      timeSinceLastBroadcast: null,
+      lastSeenOnlineAt: new Date().toISOString(),
       platformData: {
         bonga: {
           vsid: room.vsid || null,
@@ -213,12 +268,12 @@
         });
       }
 
-      const payload = await buildBongaPayload(room);
+      const payload = await buildBongaPayload(room, model.status, model.username);
       const previousThumbnailUrl = isInvalidBongaMediaUrl(model.thumbnailUrl) ? "" : model.thumbnailUrl;
       const previousPreviewUrl = isInvalidBongaMediaUrl(model.previewUrl) ? "" : model.previewUrl;
       return {
         ...model,
-        displayName: model.username,
+        displayName: payload.displayName || model.displayName || model.username,
         thumbnailUrl: payload.thumbnailUrl || previousThumbnailUrl,
         previewUrl: payload.previewUrl || previousPreviewUrl,
         platformData: {
