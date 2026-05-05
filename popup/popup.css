@@ -65,6 +65,7 @@ body.waiting {
 #importBtn:active,
 #exportBtn:active,
 #refreshBtn:active,
+.addLinkBtn:active,
 .deleteBtn:active {
   animation: buttonPress 160ms ease-out;
   box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.45);
@@ -119,8 +120,9 @@ body.waiting {
   animation: refreshPulse 700ms ease-in-out infinite;
 }
 
-/* === DELETE BUTTON === */
+/* === ROW ACTION BUTTONS === */
 
+.addLinkBtn,
 .deleteBtn {
   --button-scale: 1;
   width: 28px;
@@ -141,6 +143,18 @@ body.waiting {
     filter 120ms ease,
     opacity 120ms ease,
     transform 90ms ease;
+}
+
+.addLinkBtn {
+  background-position: 0 0;
+  opacity: 0.78;
+}
+
+.addLinkBtn:hover {
+  opacity: 1;
+  background-color: rgba(76, 175, 80, 0.14);
+  filter: brightness(1.12);
+  --button-scale: 1.08;
 }
 
 .deleteBtn:hover {
@@ -253,6 +267,13 @@ body.waiting {
   font-size: 13px;
 }
 
+.roomIcons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
 .privateName {
   color: #ff4d4d;
 }
@@ -269,6 +290,7 @@ body.waiting {
   border-radius: 4px;
   box-sizing: border-box;
   opacity: 0.9;
+  cursor: pointer;
 }
 
 .siteIconOnline {

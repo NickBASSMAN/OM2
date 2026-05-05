@@ -120,8 +120,50 @@
       username,
       ...(getPersonIdFromModel(model) ? { personId: getPersonIdFromModel(model) } : {}),
       displayName: getCleanString(model.displayName) || username,
-      profileUrl: getCleanString(model.profileUrl) || defaultProfileUrl(site, username)
+      profileUrl: getCleanString(model.profileUrl) || defaultProfileUrl(site, username),
+      linkedRooms: normalizeLinkedRooms(model, site, username)
     };
+  }
+
+  function normalizeLinkedRoomIdentity(room) {
+    if (!room || typeof room !== "object") return null;
+
+    const profileUrl = getCleanString(room.profileUrl || room.url || room.roomUrl);
+    const parsedFromUrl = profileUrl ? parseModelFromUrl(profileUrl) : null;
+    const idParts = getCleanString(room.id).includes(":")
+      ? getCleanString(room.id).split(":")
+      : [];
+    const idSite = getCleanString(idParts.shift());
+    const idUsername = getCleanString(idParts.join(":"));
+    const site = getCleanString(room.site) || parsedFromUrl?.site || idSite || "";
+    const username = getCleanString(room.username) || parsedFromUrl?.username || idUsername || "";
+    if (!site || !username) return null;
+
+    return {
+      ...room,
+      id: buildModelId(site, username),
+      site,
+      username,
+      displayName: getCleanString(room.displayName) || username,
+      profileUrl: profileUrl || defaultProfileUrl(site, username),
+      status: buildOfflineStatus(room.status || {})
+    };
+  }
+
+  function normalizeLinkedRooms(model, primarySite, primaryUsername) {
+    const rooms = Array.isArray(model?.linkedRooms)
+      ? model.linkedRooms
+      : (Array.isArray(model?.links) ? model.links : []);
+    const primaryId = buildModelId(primarySite, primaryUsername);
+    const byId = new Map();
+
+    rooms.forEach((room) => {
+      const normalized = normalizeLinkedRoomIdentity(room);
+      if (!normalized || normalized.id === primaryId) return;
+      byId.set(normalized.id, normalized);
+    });
+
+    return [...byId.values()];
   }
 
   function toFiniteCount(value, fallback = 0) {
@@ -218,7 +260,8 @@
       addedAt: Date.now(),
       thumbnailUrl: payload.thumbnailUrl || "",
       previewUrl: payload.previewUrl || "",
-      status: buildOfflineStatus(payload)
+      status: buildOfflineStatus(payload),
+      linkedRooms: []
     };
   }
 
@@ -236,6 +279,7 @@
       getPersonIdFromModel,
       getSupportedSites,
       inferSiteFromUrl,
+      normalizeLinkedRoomIdentity,
       normalizeModelIdentity,
       normalizeModelStatus,
       normalizeRoomStatus,

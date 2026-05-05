@@ -2,6 +2,7 @@
 const actionApi = browser.action || browser.browserAction;
 const {
   buildModelId,
+  normalizeLinkedRoomIdentity,
   normalizeModelIdentity,
   normalizeModelStatus
 } = globalThis.OnlineModeli.sites;
@@ -16,16 +17,69 @@ function getSiteAdapter(site) {
 }
 
 async function updateModelStatus(model) {
+  const updatedModel = await updateSingleRoomStatus(model);
+  const linkedRooms = await updateLinkedRooms(updatedModel.linkedRooms);
+  return applyLinkedRoomSummary({
+    ...updatedModel,
+    primaryRoomStatus: updatedModel.status,
+    linkedRooms
+  });
+}
+
+async function updateSingleRoomStatus(model) {
   const adapter = getSiteAdapter(model?.site);
   if (!adapter?.updateModel) return model;
   return adapter.updateModel(model);
 }
 
+async function updateLinkedRooms(rooms = []) {
+  return Promise.all((rooms || []).map(async (room) => {
+    const normalized = normalizeLinkedRoomIdentity(room);
+    if (!normalized) return null;
+
+    try {
+      return normalizeLinkedRoomIdentity(await updateSingleRoomStatus(normalized));
+    } catch (error) {
+      console.error("Error updating linked room", normalized.id, error);
+      return normalized;
+    }
+  })).then((items) => items.filter(Boolean));
+}
+
+function applyLinkedRoomSummary(model) {
+  const linkedRooms = (model.linkedRooms || [])
+    .map(normalizeLinkedRoomIdentity)
+    .filter(Boolean);
+  const primaryRoom = {
+    ...model,
+    status: model.primaryRoomStatus || model.status
+  };
+  const displayRoom = chooseDisplayRoomByAddedOrder([primaryRoom, ...linkedRooms]);
+
+  return {
+    ...model,
+    primaryRoomStatus: primaryRoom.status,
+    thumbnailUrl: displayRoom.thumbnailUrl || model.thumbnailUrl,
+    previewUrl: displayRoom.previewUrl || model.previewUrl,
+    status: displayRoom.status || model.status,
+    linkedRooms
+  };
+}
+
+function chooseDisplayRoomByAddedOrder(rooms) {
+  return (rooms || []).find((room) => room?.status?.online === true) || rooms[0] || {};
+}
+
 async function enrichModelsBasic(models) {
   return Promise.all((models || []).map(async (model) => {
     const adapter = getSiteAdapter(model?.site);
-    if (!adapter?.enrichModelBasic) return model;
-    return adapter.enrichModelBasic(model);
+    const updatedModel = adapter?.enrichModelBasic ? await adapter.enrichModelBasic(model) : model;
+    const linkedRooms = await updateLinkedRooms(updatedModel.linkedRooms);
+    return applyLinkedRoomSummary({
+      ...updatedModel,
+      primaryRoomStatus: updatedModel.status,
+      linkedRooms
+    });
   }));
 }
 
@@ -42,7 +96,12 @@ async function enrichOnlineModels(models) {
 }
 
 function getModelsIdentityKey(models) {
-  return (models || []).map((model) => model?.id || "").join("|");
+  return (models || []).map((model) => {
+    const linkedKey = (model?.linkedRooms || [])
+      .map((room) => room?.id || "")
+      .join(",");
+    return `${model?.id || ""}[${linkedKey}]`;
+  }).join("|");
 }
 
 async function performUpdateAllModelsOnce() {
@@ -66,7 +125,8 @@ async function performUpdateAllModelsOnce() {
 
   await browser.storage.local.set({ models: phaseOneModels });
 
-  const phaseTwoModels = await enrichOnlineModels(phaseOneModels);
+  const phaseTwoModels = (await enrichOnlineModels(phaseOneModels))
+    .map(applyLinkedRoomSummary);
   const latestAfterPhaseOneData = await browser.storage.local.get("models");
   const latestAfterPhaseOneModels = (latestAfterPhaseOneData.models || [])
     .map(normalizeModelIdentity)
@@ -129,15 +189,44 @@ async function updateModelFromContentMessage(message) {
     .map(normalizeModelIdentity)
     .filter(Boolean);
   const model = models.find((item) => item.id === modelId);
+  const linkedModel = model ? null : findModelByLinkedRoomId(models, modelId);
 
-  if (!model) return;
+  if (!model && !linkedModel) return;
+
+  if (linkedModel) {
+    updateLinkedRoomFromContentMessage(linkedModel, modelId, message);
+    await browser.storage.local.set({ models: models.map(applyLinkedRoomSummary) });
+    return;
+  }
 
   const thumbnailUrl = sanitizeModelMediaUrl(message.thumbnailUrl);
   const previewUrl = sanitizeModelMediaUrl(message.previewUrl);
   model.thumbnailUrl = thumbnailUrl || model.thumbnailUrl;
   model.previewUrl = previewUrl || model.previewUrl;
   model.status = normalizeModelStatus(model.status, message);
-  await browser.storage.local.set({ models });
+  model.primaryRoomStatus = model.status;
+  await browser.storage.local.set({ models: models.map(applyLinkedRoomSummary) });
+}
+
+function findModelByLinkedRoomId(models, roomId) {
+  return (models || []).find((model) => {
+    return (model.linkedRooms || []).some((room) => room.id === roomId);
+  }) || null;
+}
+
+function updateLinkedRoomFromContentMessage(model, roomId, message) {
+  model.linkedRooms = (model.linkedRooms || []).map((room) => {
+    if (room.id !== roomId) return room;
+
+    const thumbnailUrl = sanitizeModelMediaUrl(message.thumbnailUrl);
+    const previewUrl = sanitizeModelMediaUrl(message.previewUrl);
+    return normalizeLinkedRoomIdentity({
+      ...room,
+      thumbnailUrl: thumbnailUrl || room.thumbnailUrl,
+      previewUrl: previewUrl || room.previewUrl,
+      status: normalizeModelStatus(room.status, message)
+    });
+  }).filter(Boolean);
 }
 
 function sanitizeModelMediaUrl(url) {

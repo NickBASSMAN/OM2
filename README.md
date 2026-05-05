@@ -1,72 +1,98 @@
-# Online Models Tracker (Browser Extension)
+# Online Modeli
 
-## Overview
+Browser extension for tracking selected cam models across supported sites.
 
-Online Models Tracker is a browser extension that allows users to monitor selected cam models without requiring registration on any platform. It provides real-time status updates and key information about models from supported websites.
+Current version: `0.2.2`
 
-## Supported Platforms
+## Status
 
-* Chaturbate (fully supported)
-* BongaCams (planned, API ready)
-* Stripchat (planned, limited API support)
+Online Modeli is in active development. The extension is usable for daily tracking, but the project is not considered `1.0.0` complete yet.
 
-## Features
+Versioning rules:
 
-* Track selected models without creating an account
-* Add models directly from their room page using the extension button
-* Real-time model status (online, private, offline, etc.)
-* Viewer count in the model’s room
-* Display how long a model has been online
-* Show last stream time
-* Preview live video on thumbnail hover (currently supported except for Stripchat)
-* Simple UI with button-based controls
+* Third digit: small UI and behavior changes
+* Second digit: new sites and larger feature changes
+* `1.0.0`: first complete stable version
 
-## Current Status
+## Supported Sites
 
-* Fully functional integration with Chaturbate
-* Partial groundwork completed for BongaCams and Stripchat
+* Chaturbate: status, viewers, stream time, hover preview
+* BongaCams: status, viewers, stream time, hover preview
+* Stripchat: planned / partial groundwork only
+
+## Main Features
+
+* Add a model from the currently opened room page
+* Track online, offline, public, private, group, and password-style room states where available
+* Show viewer count and stream time
+* Hover over supported thumbnails to preview the live stream
+* Open tracked rooms from the popup
+* Import and export model lists as JSON
+* Periodic background refresh with popup badge count
+* Link one model to rooms on multiple supported sites
+
+## Multi-Site Links
+
+Each tracked model has one primary room and can have additional linked rooms on other sites.
+
+Workflow:
+
+1. Add the model from the first room page.
+2. Open the same model's room on another supported site.
+3. In the popup, press the add-link button on the existing model row.
+4. If that room is not already linked, it is saved under the same model.
+
+The popup shows a site icon for each linked room. Each icon reflects that room's own status and opens that exact room when clicked.
+
+When a model is online in multiple rooms, popup display status follows the order in which rooms were added:
+
+* Primary room first
+* Then linked rooms in added order
+* The first online room in that order controls the row status, thumbnail, and preview
+* If all rooms are offline, the primary room status is shown
 
 ## Installation
 
-Currently, the extension is available only for Mozilla Firefox and must be installed manually.
+Firefox temporary install:
 
-### Steps:
-
-1. Open Firefox
-2. Go to `about:debugging`
-3. Select **This Firefox**
-4. Click **Load Temporary Add-on**
-5. Select the extension’s manifest file
+1. Open `about:debugging`
+2. Select **This Firefox**
+3. Click **Load Temporary Add-on**
+4. Select `manifest.json`
 
 ## Usage
 
-1. Open a model’s room on a supported platform
-2. Click the extension button to add the model to your tracking list
-3. Use the extension interface to manage tracked models
-4. Hover over a model thumbnail to preview the live stream (if supported)
-5. Click on a model to open their room
+1. Open a supported model room.
+2. Click the extension button.
+3. Press the main add button to track the current room as a new model.
+4. Use the row add-link button to attach the current room to an existing model.
+5. Hover a thumbnail to preview when preview is supported.
+6. Click a model row or a site icon to open the room.
 
-## Technical Details
+## Technical Notes
 
-* Built with: JavaScript
-* Platform: Mozilla Firefox (WebExtension API)
+* Manifest V3 WebExtension
+* JavaScript only
+* Stores data in `browser.storage.local`
+* Uses background adapters per site
+* Shared site API code lives in `core/api.js`
+* Export format currently uses payload `version: 4`
 
 ## Limitations
 
-* Stripchat does not support video preview due to lack of API
-* BongaCams integration is not yet enabled
-* No stream recording functionality at this stage
+* Stripchat is not fully implemented yet
+* External site APIs can change or block requests
+* BongaCams API can be affected by Cloudflare/session availability
+* No stream recording functionality
+* Manual temporary install only at this stage
 
-## Roadmap (TODO)
+## Roadmap
 
-* Complete BongaCams integration (API already prepared)
-* Implement Stripchat support (without hover preview)
-* Allow adding multiple links for the same model across supported platforms
-* Display which platform the model is currently streaming on
-* Add stream recording functionality
+* Complete Stripchat support
+* Improve linked-room management UI
+* Add clearer per-room status details
+* Package the extension for regular installation
 
 ## Disclaimer
 
-This extension is intended for personal use and does not require authentication on third-party platforms. Availability of features depends on external site APIs.
-
----
+This extension is intended for personal use. It depends on third-party websites and their public behavior/API responses, which may change without notice.

@@ -12,6 +12,7 @@ const {
   getCleanString,
   getPersonIdFromModel,
   inferSiteFromUrl,
+  normalizeLinkedRoomIdentity,
   normalizeModelIdentity,
   parseModelFromUrl
 } = globalThis.OnlineModeli.sites;
@@ -151,15 +152,12 @@ function renderModel(model) {
   username.textContent = model.username;
   name.appendChild(username);
 
-  const siteIcon = document.createElement("span");
-  const siteStatusClass = getSiteIconStatusClass(model.status);
-  siteIcon.className = [
-    "siteIcon",
-    `siteIcon-${model.site || "unknown"}`,
-    siteStatusClass
-  ].filter(Boolean).join(" ");
-  siteIcon.title = model.site || "";
-  name.appendChild(siteIcon);
+  const roomIcons = document.createElement("span");
+  roomIcons.className = "roomIcons";
+  getModelRooms(model).forEach((room) => {
+    roomIcons.appendChild(createRoomIcon(room));
+  });
+  name.appendChild(roomIcons);
 
   const status = document.createElement("div");
   const showType = model.status?.roomStatus || model.status?.showType;
@@ -189,6 +187,14 @@ function renderModel(model) {
   info.appendChild(name);
   info.appendChild(statusRow);
 
+  const addLinkBtn = document.createElement("button");
+  addLinkBtn.className = "addLinkBtn";
+  addLinkBtn.title = "Add current room link to this model";
+  addLinkBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await addCurrentRoomLinkToModel(model.id);
+  });
+
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "deleteBtn";
   deleteBtn.title = "Delete model";
@@ -206,6 +212,7 @@ function renderModel(model) {
 
   el.appendChild(thumbWrap);
   el.appendChild(info);
+  el.appendChild(addLinkBtn);
   el.appendChild(deleteBtn);
 
   el.addEventListener("click", () => {
@@ -213,6 +220,41 @@ function renderModel(model) {
   });
 
   container.appendChild(el);
+}
+
+function getModelRooms(model) {
+  return [
+    {
+      ...model,
+      status: model.primaryRoomStatus || model.status
+    },
+    ...(model.linkedRooms || [])
+      .map(normalizeLinkedRoomIdentity)
+      .filter(Boolean)
+  ];
+}
+
+function createRoomIcon(room) {
+  const siteIcon = document.createElement("span");
+  const siteStatusClass = getSiteIconStatusClass(room.status);
+  siteIcon.className = [
+    "siteIcon",
+    `siteIcon-${room.site || "unknown"}`,
+    siteStatusClass
+  ].filter(Boolean).join(" ");
+  siteIcon.title = `${room.site || ""}: ${room.username || ""} - ${getRoomStatusLabel(room.status)}`;
+  siteIcon.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (room.profileUrl) browser.tabs.create({ url: room.profileUrl });
+  });
+  return siteIcon;
+}
+
+function getRoomStatusLabel(status) {
+  if (!status?.online) return "offline";
+  const roomStatus = status.roomStatus || status.showType || "online";
+  const viewers = Number(status.viewers) || 0;
+  return `${roomStatus} (${viewers})`;
 }
 
 function getModelPreviewUrl(model) {
@@ -387,6 +429,90 @@ async function addCurrentModel() {
   }
 }
 
+async function addCurrentRoomLinkToModel(modelId) {
+  const tabs = await browser.tabs.query({
+    active: true,
+    currentWindow: true
+  });
+  const tab = tabs[0];
+  if (!tab?.url) return;
+
+  const parsed = parseModelFromUrl(tab.url);
+  if (!parsed) return;
+
+  const data = await browser.storage.local.get("models");
+  const models = (data.models || [])
+    .map(normalizeModelIdentity)
+    .filter(Boolean);
+  const index = models.findIndex((model) => model.id === modelId);
+  if (index === -1) return;
+
+  const model = models[index];
+  const roomId = buildModelId(parsed.site, parsed.username);
+  if (model.id === roomId || (model.linkedRooms || []).some((room) => room.id === roomId)) {
+    return;
+  }
+
+  let modelData = null;
+  try {
+    modelData = await browser.tabs.sendMessage(tab.id, {
+      type: "GET_MODEL_DATA"
+    });
+  } catch (error) {
+    console.error("Failed to get linked room data from content script:", error);
+    modelData = {
+      site: parsed.site,
+      username: parsed.username,
+      online: false,
+      thumbnailUrl: "",
+      previewUrl: "",
+      viewers: 0
+    };
+  }
+
+  const linkedRoom = normalizeLinkedRoomIdentity({
+    id: roomId,
+    site: parsed.site,
+    username: parsed.username,
+    profileUrl: parsed.url,
+    displayName: parsed.username,
+    thumbnailUrl: modelData.thumbnailUrl || "",
+    previewUrl: getInitialPreviewUrl({ site: parsed.site, thumbnailUrl: modelData.thumbnailUrl || "" }, modelData),
+    status: {
+      online: Boolean(modelData.online),
+      showType: modelData.showType || modelData.roomStatus || "offline",
+      roomStatus: modelData.roomStatus || modelData.showType || "offline",
+      viewers: Number(modelData.viewers) || 0,
+      startDtUtc: modelData.startDtUtc || null,
+      startTimestamp: modelData.startTimestamp || null,
+      lastBroadcast: modelData.lastBroadcast || null,
+      timeSinceLastBroadcast: modelData.timeSinceLastBroadcast || null
+    }
+  });
+
+  if (!linkedRoom) return;
+
+  model.linkedRooms = [
+    ...(model.linkedRooms || []),
+    linkedRoom
+  ];
+
+  await browser.storage.local.set({ models });
+  await renderModels();
+
+  try {
+    const response = await browser.runtime.sendMessage({
+      type: "REQUEST_UPDATE_MODEL",
+      modelId: model.id
+    });
+    if (response?.success) {
+      await renderModels();
+    }
+  } catch (error) {
+    console.error("Failed to update model after adding linked room:", error);
+  }
+}
+
 function getInitialPreviewUrl(model, modelData = {}) {
   const previewUrl = typeof modelData.previewUrl === "string" ? modelData.previewUrl : "";
   if (previewUrl) return previewUrl;
@@ -475,7 +601,7 @@ async function exportModelsToJson() {
 
 function buildExportPayload(models) {
   return {
-    version: 3,
+    version: 4,
     exportedAt: new Date().toISOString(),
     models: (models || [])
       .map((model) => {
@@ -497,11 +623,23 @@ function buildExportPayload(models) {
           ...(site ? { site } : {}),
           ...(personId ? { personId } : {}),
           ...(displayName && displayName !== username ? { displayName } : {}),
+          ...(model.linkedRooms?.length ? { linkedRooms: buildExportLinkedRooms(model.linkedRooms) } : {}),
           ...(lastOnlineAt ? { lastOnlineAt } : {})
         };
       })
       .filter(Boolean)
   };
+}
+
+function buildExportLinkedRooms(rooms) {
+  return (rooms || [])
+    .map(normalizeLinkedRoomIdentity)
+    .filter(Boolean)
+    .map((room) => ({
+      site: room.site,
+      username: room.username,
+      roomUrl: room.profileUrl
+    }));
 }
 
 function normalizeImportedModel(model) {
@@ -521,6 +659,8 @@ function normalizeImportedModel(model) {
     profileUrl,
     thumbnailUrl: typeof model.thumbnailUrl === "string" ? model.thumbnailUrl : "",
     previewUrl: typeof model.previewUrl === "string" ? model.previewUrl : "",
+    linkedRooms: normalizeImportedLinkedRooms(model.linkedRooms || model.links),
+    primaryRoomStatus: model.primaryRoomStatus || null,
     status: {
       online: Boolean(model.status?.online),
       showType: model.status?.showType || model.status?.roomStatus || "offline",
@@ -532,6 +672,20 @@ function normalizeImportedModel(model) {
       timeSinceLastBroadcast: model.status?.timeSinceLastBroadcast || null
     }
   };
+}
+
+function normalizeImportedLinkedRooms(rooms) {
+  if (!Array.isArray(rooms)) return [];
+
+  return rooms
+    .map((room) => {
+      const normalized = normalizeLinkedRoomIdentity({
+        ...room,
+        profileUrl: room.profileUrl || room.roomUrl || room.url
+      });
+      return normalized;
+    })
+    .filter(Boolean);
 }
 
 function resolveImportedIdentity(model) {
