@@ -135,6 +135,7 @@
     if (
       roomStatus === "public" ||
       roomStatus === "private" ||
+      roomStatus === "group" ||
       roomStatus === "offline" ||
       roomStatus === "password" ||
       roomStatus === "password-required"

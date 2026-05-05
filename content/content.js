@@ -53,10 +53,60 @@
     return null;
   }
 
+  async function getBongaModelDataFromAPI(username) {
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: "FETCH_MODELS",
+        username
+      });
+      if (!response?.ok || !Array.isArray(response.data)) return null;
+
+      const usernameKey = getUsernameKey(username);
+      const room = response.data.find((item) => {
+        return getUsernameKey(item.username || item.id) === usernameKey;
+      });
+      if (!room) return null;
+
+      return {
+        site: "bongacams",
+        username,
+        online: true,
+        thumbnailUrl: room.thumbnail || "",
+        previewUrl: room.previewUrl || "",
+        showType: room.status || "public",
+        roomStatus: room.status || "public",
+        viewers: toFiniteCount(room.viewers, 0),
+        startTimestamp: null
+      };
+    } catch (error) {
+      console.error("Error fetching from BongaCams API:", error);
+      return null;
+    }
+  }
+
+  function getUsernameKey(username) {
+    return String(username || "").trim().toLowerCase();
+  }
+
+  function isUsableMediaUrl(url) {
+    if (!url || typeof url !== "string") return false;
+
+    const value = url.toLowerCase();
+    return !(
+      value.includes("/sprite/") ||
+      value.includes("model_flags_atlas") ||
+      value.includes(".svg") ||
+      value.startsWith("data:image/svg")
+    );
+  }
+
   function findFirstImage(selectors) {
     for (const selector of selectors) {
-      const img = document.querySelector(selector);
-      if (img?.src) return img.src;
+      const elements = document.querySelectorAll(selector);
+      for (const element of elements) {
+        const url = element.currentSrc || element.src || element.poster || "";
+        if (isUsableMediaUrl(url)) return url;
+      }
     }
     return "";
   }
@@ -89,7 +139,7 @@
       'img[src*="thumbnail"]',
       'img[src*="live.mmcdn.com"]',
       'img[src*="thumb.live.mmcdn.com"]',
-      'img[src*="model"]',
+      'img[src*="model"]:not([src*="model_flags_atlas"])',
       ".model-img img",
       'img[id="profileImg"]',
       "video[poster]"
@@ -162,6 +212,11 @@
 
     if (identity.site === "chaturbate") {
       const apiData = await getChaturbateModelDataFromAPI(identity.username);
+      if (apiData) return apiData;
+    }
+
+    if (identity.site === "bongacams") {
+      const apiData = await getBongaModelDataFromAPI(identity.username);
       if (apiData) return apiData;
     }
 

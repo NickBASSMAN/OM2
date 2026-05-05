@@ -117,7 +117,7 @@ function renderModel(model) {
 
   const fallback = browser.runtime.getURL("icons/offline.jpg");
 
-  img.src = model.thumbnailUrl || fallback;
+  img.src = getSafeMediaUrl(model.thumbnailUrl) || fallback;
 
   img.onerror = () => {
     img.onerror = null;
@@ -222,11 +222,27 @@ function getModelPreviewUrl(model) {
 
   if (model.site === "chaturbate") {
     return buildChaturbateJpegPreviewUrl(model.username)
-      || (typeof model.previewUrl === "string" && model.previewUrl)
-      || (typeof model.thumbnailUrl === "string" ? model.thumbnailUrl : "");
+      || getSafeMediaUrl(model.previewUrl)
+      || getSafeMediaUrl(model.thumbnailUrl);
   }
 
-  return typeof model.previewUrl === "string" ? model.previewUrl : "";
+  return getSafeMediaUrl(model.previewUrl);
+}
+
+function getSafeMediaUrl(url) {
+  if (!url || typeof url !== "string") return "";
+
+  const value = url.toLowerCase();
+  if (
+    value.includes("/sprite/") ||
+    value.includes("model_flags_atlas") ||
+    value.includes(".svg") ||
+    value.startsWith("data:image/svg")
+  ) {
+    return "";
+  }
+
+  return url;
 }
 
 function startPreviewPlayer(model, anchor, previewUrl) {
@@ -350,7 +366,7 @@ async function addCurrentModel() {
 
   const model = createModelFromIdentity(parsed, modelData);
   if (!model) return;
-  model.previewUrl = modelData.previewUrl || model.thumbnailUrl || "";
+  model.previewUrl = getInitialPreviewUrl(model, modelData);
 
   models.push(model);
 
@@ -369,6 +385,17 @@ async function addCurrentModel() {
   } catch (error) {
     console.error("Failed to update new model status:", error);
   }
+}
+
+function getInitialPreviewUrl(model, modelData = {}) {
+  const previewUrl = typeof modelData.previewUrl === "string" ? modelData.previewUrl : "";
+  if (previewUrl) return previewUrl;
+
+  if (model.site === "chaturbate") {
+    return model.thumbnailUrl || "";
+  }
+
+  return "";
 }
 
 async function requestUpdateAllModels() {

@@ -6,6 +6,7 @@ const {
   normalizeModelStatus
 } = globalThis.OnlineModeli.sites;
 const siteAdapters = globalThis.OnlineModeli.backgroundAdapters;
+const bongaApi = globalThis.OnlineModeli.bongaApi || {};
 
 let updateAllInFlight = null;
 let updateAllQueued = false;
@@ -131,10 +132,28 @@ async function updateModelFromContentMessage(message) {
 
   if (!model) return;
 
-  model.thumbnailUrl = message.thumbnailUrl || model.thumbnailUrl;
-  model.previewUrl = message.previewUrl || model.previewUrl || model.thumbnailUrl;
+  const thumbnailUrl = sanitizeModelMediaUrl(message.thumbnailUrl);
+  const previewUrl = sanitizeModelMediaUrl(message.previewUrl);
+  model.thumbnailUrl = thumbnailUrl || model.thumbnailUrl;
+  model.previewUrl = previewUrl || model.previewUrl;
   model.status = normalizeModelStatus(model.status, message);
   await browser.storage.local.set({ models });
+}
+
+function sanitizeModelMediaUrl(url) {
+  if (!url || typeof url !== "string") return "";
+
+  const value = url.toLowerCase();
+  if (
+    value.includes("/sprite/") ||
+    value.includes("model_flags_atlas") ||
+    value.includes(".svg") ||
+    value.startsWith("data:image/svg")
+  ) {
+    return "";
+  }
+
+  return url;
 }
 
 function exportModelsFile(message, sendResponse) {
@@ -206,6 +225,38 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "EXPORT_MODELS_FILE") {
     exportModelsFile(message, sendResponse);
+    return true;
+  }
+
+  if (message.type === "FETCH_MODELS") {
+    if (!bongaApi.fetchBongaModels) {
+      sendResponse({ ok: false, error: "Bonga API is unavailable" });
+      return false;
+    }
+
+    const options = Array.isArray(message.usernames)
+      ? { usernames: message.usernames }
+      : (message.username ? { usernames: [message.username] } : {});
+
+    bongaApi.fetchBongaModels(options).then((data) => {
+      sendResponse({ ok: true, data });
+    }).catch((error) => {
+      sendResponse({ ok: false, error: error.message });
+    });
+    return true;
+  }
+
+  if (message.type === "FETCH_ROOM") {
+    if (!bongaApi.fetchBongaRoomData) {
+      sendResponse({ ok: false, error: "Bonga API is unavailable" });
+      return false;
+    }
+
+    bongaApi.fetchBongaRoomData(message.username).then((sessionTs) => {
+      sendResponse({ ok: true, sessionTs });
+    }).catch((error) => {
+      sendResponse({ ok: false, error: error.message });
+    });
     return true;
   }
 

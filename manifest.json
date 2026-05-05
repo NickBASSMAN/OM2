@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Online Modeli",
-  "version": "1.0",
+  "version": "0.2.0",
   "description": "Track and display online status of models from supported sites.",
 
   "icons": {
@@ -22,12 +22,14 @@
     "*://*.chaturbate.com/*",
     "*://*.mmcdn.com/*",
     "*://*.bongacams.com/*",
+    "*://*.bcvcdn.com/*",
     "*://*.stripchat.com/*"
   ],
 
   "background": {
     "scripts": [
       "shared/sites.js",
+      "core/api.js",
       "sites/background-adapters.js",
       "background.js"
     ]
