@@ -215,7 +215,9 @@
       showType: modelData.showType,
       roomStatus: modelData.roomStatus,
       startDtUtc: modelData.startDtUtc,
-      startTimestamp: modelData.startTimestamp
+      startTimestamp: modelData.startTimestamp,
+      lastBroadcast: modelData.lastBroadcast,
+      timeSinceLastBroadcast: modelData.timeSinceLastBroadcast
     });
     console.log("Sent model data:", modelData);
   }

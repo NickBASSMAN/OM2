@@ -162,11 +162,13 @@ function renderModel(model) {
   const status = document.createElement("div");
   const showType = model.status?.roomStatus || model.status?.showType;
   const isOnline = model.status?.online;
-  const statusClass = isPassword ? "password" : (isOnline ? "online" : "offline");
+  const isRegion = roomStatus === "region";
+  const isRoomPass = roomStatus === "room pass";
+  const statusClass = isPassword || isRegion || isRoomPass ? "warningStatus" : (isOnline ? "online" : "offline");
   status.className = "status " + statusClass;
 
-  if (isPassword) {
-    status.textContent = `PASSWORD (${model.status.viewers || 0})`;
+  if (isPassword || isRegion || isRoomPass) {
+    status.textContent = `${showType.toUpperCase()} (${model.status.viewers || 0})`;
   } else if (isOnline) {
     status.textContent = showType
       ? `${showType.toUpperCase()} (${model.status.viewers || 0})`
@@ -245,17 +247,34 @@ function getModelRooms(model) {
 function createRoomIcon(room) {
   const siteIcon = document.createElement("span");
   const siteStatusClass = getSiteIconStatusClass(room.status);
+  const roomUrl = getRoomProfileUrl(room);
   siteIcon.className = [
     "siteIcon",
     `siteIcon-${room.site || "unknown"}`,
     siteStatusClass
   ].filter(Boolean).join(" ");
   siteIcon.title = `${room.site || ""}: ${room.username || ""} - ${getRoomStatusLabel(room.status)}`;
+  siteIcon.setAttribute("role", "button");
+  siteIcon.tabIndex = 0;
   siteIcon.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (room.profileUrl) browser.tabs.create({ url: room.profileUrl });
+    openRoomProfile(roomUrl);
+  });
+  siteIcon.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    openRoomProfile(roomUrl);
   });
   return siteIcon;
+}
+
+function getRoomProfileUrl(room) {
+  return getCleanString(room?.profileUrl) || defaultProfileUrl(room?.site, room?.username);
+}
+
+function openRoomProfile(url) {
+  if (url) browser.tabs.create({ url });
 }
 
 function getRoomStatusLabel(status) {
@@ -266,17 +285,25 @@ function getRoomStatusLabel(status) {
 }
 
 function getModelPreviewUrl(model) {
+  const previewSite = getCleanString(model.previewRoomSite) || getCleanString(model.displayRoomSite) || model.site;
+  const previewUsername = getCleanString(model.previewRoomUsername) || getCleanString(model.displayRoomUsername) || model.username;
+  const previewUrl = getSafeMediaUrl(model.previewRoomPreviewUrl) || getSafeMediaUrl(model.previewUrl);
+  const previewThumbnailUrl = getSafeMediaUrl(model.previewRoomThumbnailUrl) || getSafeMediaUrl(model.thumbnailUrl);
+
+  if (model.site === "stripchat" && !getCleanString(model.previewRoomId)) return "";
+
   const roomStatus = (model.status?.roomStatus || model.status?.showType || "").toLowerCase();
   const isPublicOnline = model.status?.online === true && (!roomStatus || roomStatus === "public");
-  if (!isPublicOnline) return "";
+  const hasPreviewRoom = getCleanString(model.previewRoomId);
+  if (!isPublicOnline && !hasPreviewRoom) return "";
 
-  if (model.site === "chaturbate") {
-    return buildChaturbateJpegPreviewUrl(model.username)
-      || getSafeMediaUrl(model.previewUrl)
-      || getSafeMediaUrl(model.thumbnailUrl);
+  if (previewSite === "chaturbate") {
+    return buildChaturbateJpegPreviewUrl(previewUsername)
+      || previewUrl
+      || previewThumbnailUrl;
   }
 
-  return getSafeMediaUrl(model.previewUrl);
+  return previewUrl;
 }
 
 function getSafeMediaUrl(url) {
@@ -614,7 +641,7 @@ function buildExportPayload(models) {
     models: (models || [])
       .map((model) => {
         const username = getCleanString(model?.username);
-        const roomUrl = getCleanString(model?.profileUrl);
+        const roomUrl = getCleanString(model?.profileUrl || model?.roomUrl || model?.url);
         if (!username || !roomUrl) return null;
 
         const site = getCleanString(model?.site) || inferSiteFromUrl(roomUrl);
@@ -699,6 +726,7 @@ function normalizeImportedLinkedRooms(rooms) {
 function resolveImportedIdentity(model) {
   const siteRaw = typeof model.site === "string" ? model.site.trim() : "";
   const usernameRaw = typeof model.username === "string" ? model.username.trim() : "";
+  const roomUrlRaw = getCleanString(model.roomUrl || model.profileUrl || model.url);
   if (siteRaw && usernameRaw) {
     return {
       site: siteRaw,
@@ -706,7 +734,7 @@ function resolveImportedIdentity(model) {
       id: buildModelId(siteRaw, usernameRaw),
       personId: getPersonIdFromModel(model),
       displayName: getCleanString(model.displayName) || usernameRaw,
-      profileUrl: getCleanString(model.profileUrl) || defaultProfileUrl(siteRaw, usernameRaw)
+      profileUrl: roomUrlRaw || defaultProfileUrl(siteRaw, usernameRaw)
     };
   }
 
@@ -720,13 +748,13 @@ function resolveImportedIdentity(model) {
         id: buildModelId(idSite.trim(), idUsername),
         personId: getPersonIdFromModel(model),
         displayName: getCleanString(model.displayName) || idUsername,
-        profileUrl: getCleanString(model.profileUrl) || defaultProfileUrl(idSite.trim(), idUsername)
+        profileUrl: roomUrlRaw || defaultProfileUrl(idSite.trim(), idUsername)
       };
     }
   }
 
-  if (typeof model.profileUrl === "string" && model.profileUrl) {
-    const parsed = parseModelFromUrl(model.profileUrl);
+  if (roomUrlRaw) {
+    const parsed = parseModelFromUrl(roomUrlRaw);
     if (parsed) {
       return {
         site: parsed.site,

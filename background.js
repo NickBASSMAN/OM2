@@ -17,13 +17,22 @@ function getSiteAdapter(site) {
 }
 
 async function updateModelStatus(model) {
-  const updatedModel = await updateSingleRoomStatus(model);
+  const updatedModel = await updateSingleRoomStatus(getPrimaryRoomModel(model));
   const linkedRooms = await updateLinkedRooms(updatedModel.linkedRooms);
   return applyLinkedRoomSummary({
     ...updatedModel,
     primaryRoomStatus: updatedModel.status,
     linkedRooms
   });
+}
+
+function getPrimaryRoomModel(model) {
+  if (!model?.primaryRoomStatus) return model;
+
+  return {
+    ...model,
+    status: model.primaryRoomStatus
+  };
 }
 
 async function updateSingleRoomStatus(model) {
@@ -54,11 +63,23 @@ function applyLinkedRoomSummary(model) {
     ...model,
     status: model.primaryRoomStatus || model.status
   };
-  const displayRoom = chooseDisplayRoomByAddedOrder([primaryRoom, ...linkedRooms]);
+  const rooms = [primaryRoom, ...linkedRooms];
+  const displayRoom = chooseDisplayRoomByAddedOrder(rooms, primaryRoom);
+  const previewRoom = choosePreviewRoomByAddedOrder(rooms, primaryRoom);
 
   return {
     ...model,
     primaryRoomStatus: primaryRoom.status,
+    displayRoomId: displayRoom.id || model.id,
+    displayRoomSite: displayRoom.site || model.site,
+    displayRoomUsername: displayRoom.username || model.username,
+    displayRoomProfileUrl: displayRoom.profileUrl || model.profileUrl,
+    previewRoomId: previewRoom?.id || "",
+    previewRoomSite: previewRoom?.site || "",
+    previewRoomUsername: previewRoom?.username || "",
+    previewRoomProfileUrl: previewRoom?.profileUrl || "",
+    previewRoomPreviewUrl: previewRoom?.previewUrl || "",
+    previewRoomThumbnailUrl: previewRoom?.thumbnailUrl || "",
     thumbnailUrl: displayRoom.thumbnailUrl || model.thumbnailUrl,
     previewUrl: displayRoom.previewUrl || model.previewUrl,
     status: displayRoom.status || model.status,
@@ -66,14 +87,24 @@ function applyLinkedRoomSummary(model) {
   };
 }
 
-function chooseDisplayRoomByAddedOrder(rooms) {
+function chooseDisplayRoomByAddedOrder(rooms, primaryRoom = {}) {
+  if (primaryRoom?.site === "stripchat") return primaryRoom;
   return (rooms || []).find((room) => room?.status?.online === true) || rooms[0] || {};
+}
+
+function choosePreviewRoomByAddedOrder(rooms, primaryRoom = {}) {
+  const onlineRooms = (rooms || []).filter((room) => room?.status?.online === true);
+  if (primaryRoom?.site !== "stripchat") return onlineRooms[0] || null;
+  return onlineRooms.find((room) => room?.site !== "stripchat") || null;
 }
 
 async function enrichModelsBasic(models) {
   return Promise.all((models || []).map(async (model) => {
-    const adapter = getSiteAdapter(model?.site);
-    const updatedModel = adapter?.enrichModelBasic ? await adapter.enrichModelBasic(model) : model;
+    const primaryModel = getPrimaryRoomModel(model);
+    const adapter = getSiteAdapter(primaryModel?.site);
+    const updatedModel = adapter?.enrichModelBasic
+      ? await adapter.enrichModelBasic(primaryModel)
+      : primaryModel;
     const linkedRooms = await updateLinkedRooms(updatedModel.linkedRooms);
     return applyLinkedRoomSummary({
       ...updatedModel,
@@ -125,8 +156,12 @@ async function performUpdateAllModelsOnce() {
 
   await browser.storage.local.set({ models: phaseOneModels });
 
-  const phaseTwoModels = (await enrichOnlineModels(phaseOneModels))
-    .map(applyLinkedRoomSummary);
+  const phaseTwoPrimaryModels = phaseOneModels.map(getPrimaryRoomModel);
+  const phaseTwoModels = (await enrichOnlineModels(phaseTwoPrimaryModels))
+    .map((model) => applyLinkedRoomSummary({
+      ...model,
+      primaryRoomStatus: model.status
+    }));
   const latestAfterPhaseOneData = await browser.storage.local.get("models");
   const latestAfterPhaseOneModels = (latestAfterPhaseOneData.models || [])
     .map(normalizeModelIdentity)

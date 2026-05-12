@@ -2,7 +2,7 @@
 
 Browser extension for tracking selected cam models across supported sites.
 
-Current version: `0.2.5`
+Current version: `0.2.6`
 
 ## Status
 
@@ -30,6 +30,16 @@ Versioning rules:
 * Import and export model lists as JSON
 * Periodic background refresh with popup badge count
 * Link one model to rooms on multiple supported sites
+
+## Changelog
+
+### 0.2.6
+
+* Fixed Chaturbate `roomlogin/<username>` URL parsing for password-protected rooms
+* Added Chaturbate restricted room states: `room pass` for password-required rooms and `region` for region/gender-blocked rooms
+* Restricted Chaturbate states are shown as orange warning statuses while still using room-list thumbnail, preview, viewer count, and stream timing when available
+* Preserved Chaturbate relative last broadcast text instead of replacing it with a fixed date during room-list refreshes
+* Site icons beside linked rooms now open that exact room URL
 
 ## Multi-Site Links
 

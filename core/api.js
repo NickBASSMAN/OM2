@@ -30,7 +30,15 @@
     const url = `https://chaturbate.com/api/biocontext/${encodeURIComponent(username)}/?`;
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Biocontext request failed with status ${response.status}`);
+      const error = new Error(`Biocontext request failed with status ${response.status}`);
+      error.status = response.status;
+      try {
+        error.payload = await response.json();
+        error.code = error.payload?.code;
+      } catch {
+        error.payload = null;
+      }
+      throw error;
     }
 
     const data = await response.json();
@@ -92,15 +100,22 @@
     return buildChaturbateJpegPreviewUrl(username);
   }
 
+  function getChaturbateUsernameKey(username) {
+    return String(username || "").trim().toLowerCase();
+  }
+
   async function fetchOnlineChaturbateRoomByUsername(username) {
     let offset = 0;
     let onlineCount = Infinity;
+    const usernameKey = getChaturbateUsernameKey(username);
 
     while (offset < onlineCount) {
       const page = await fetchChaturbateRoomsPage(offset, CHATURBATE_LIMIT);
       onlineCount = page.onlineCount;
 
-      const room = page.rooms.find((item) => item.username === username);
+      const room = page.rooms.find((item) => {
+        return getChaturbateUsernameKey(item.username) === usernameKey;
+      });
       if (room) return room;
 
       offset += CHATURBATE_LIMIT;
@@ -111,26 +126,46 @@
 
   async function fetchChaturbateModelStatus(username) {
     try {
-      const bio = await fetchChaturbateBioStatus(username);
-      const room = bio.online ? await fetchOnlineChaturbateRoomByUsername(username) : null;
+      let bio = {};
+      let shouldSearchRoomlist = true;
+      let restrictedRoomStatus = "";
+
+      try {
+        bio = await fetchChaturbateBioStatus(username);
+        shouldSearchRoomlist = bio.online;
+      } catch (error) {
+        if (error?.status !== 401) throw error;
+        restrictedRoomStatus = getChaturbateRestrictedRoomStatus(error?.code);
+        shouldSearchRoomlist = true;
+      }
+
+      const room = shouldSearchRoomlist ? await fetchOnlineChaturbateRoomByUsername(username) : null;
       const roomOnline = room
         ? (typeof room.is_online === "boolean"
           ? room.is_online
           : (typeof room.online === "boolean" ? room.online : true))
         : bio.online;
       const effectiveShowType = resolveEffectiveShowType(bio.roomStatus, room?.current_show);
+      const roomStatus = restrictedRoomStatus || effectiveShowType;
 
       const payload = {
         thumbnailUrl: room?.img || "",
         previewUrl: getChaturbatePreviewUrl(room),
         online: roomOnline,
-        showType: effectiveShowType,
-        roomStatus: effectiveShowType,
+        showType: roomStatus,
+        roomStatus,
         startDtUtc: room?.start_dt_utc || null,
         startTimestamp: room?.start_timestamp || null,
         lastBroadcast: bio.lastBroadcast,
         timeSinceLastBroadcast: bio.timeSinceLastBroadcast
       };
+
+      if (room) {
+        payload.thumbnailUrl = room.img || "";
+        payload.previewUrl = getChaturbatePreviewUrl(room);
+        payload.startDtUtc = room.start_dt_utc || null;
+        payload.startTimestamp = room.start_timestamp || null;
+      }
 
       if (roomOnline) {
         const viewers = room?.num_users ?? bio.viewers;
@@ -149,18 +184,27 @@
   }
 
   async function buildChaturbateStatusFromRoom(username, room) {
-    const bio = await fetchChaturbateBioStatus(username);
+    let bio = {};
+    let restrictedRoomStatus = "";
+    try {
+      bio = await fetchChaturbateBioStatus(username);
+    } catch (error) {
+      if (error?.status !== 401) throw error;
+      restrictedRoomStatus = getChaturbateRestrictedRoomStatus(error?.code);
+    }
+
     const roomOnline = typeof room.is_online === "boolean"
       ? room.is_online
       : (typeof room.online === "boolean" ? room.online : true);
     const effectiveShowType = resolveEffectiveShowType(bio.roomStatus, room.current_show);
+    const roomStatus = restrictedRoomStatus || effectiveShowType;
 
     const payload = {
       thumbnailUrl: room.img || "",
       previewUrl: getChaturbatePreviewUrl(room),
       online: roomOnline,
-      showType: effectiveShowType,
-      roomStatus: effectiveShowType,
+      showType: roomStatus,
+      roomStatus,
       startDtUtc: room.start_dt_utc || null,
       startTimestamp: room.start_timestamp || null,
       lastBroadcast: bio.lastBroadcast,
@@ -177,6 +221,12 @@
     }
 
     return payload;
+  }
+
+  function getChaturbateRestrictedRoomStatus(code) {
+    if (code === "access-denied") return "region";
+    if (code === "password-required") return "room pass";
+    return "";
   }
 
   function isCloudflareChallenge(text) {

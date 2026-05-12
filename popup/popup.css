@@ -340,7 +340,8 @@ body.waiting {
   color: #f44336;
 }
 
-.password {
+.password,
+.warningStatus {
   color: #ff9800;
 }
 

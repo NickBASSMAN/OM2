@@ -49,6 +49,10 @@
     model.status.startTimestamp = room.start_timestamp || model.status.startTimestamp || null;
   }
 
+  function getChaturbateUsernameKey(username) {
+    return String(username || "").trim().toLowerCase();
+  }
+
   async function updateChaturbateModel(model, roomHint = null) {
     try {
       let payload;
@@ -83,6 +87,10 @@
         status: normalizeModelStatus(model.status, bio)
       };
     } catch (error) {
+      if (error?.status === 401) {
+        return model;
+      }
+
       console.error("Biocontext update failed for model", model.id, error);
       return model;
     }
@@ -98,12 +106,14 @@
 
     nextModels.forEach((model, index) => {
       if (model.site !== "chaturbate") return;
-      if (model.status?.online !== true) return;
 
-      const list = usernameToIndexes.get(model.username) || [];
+      const usernameKey = getChaturbateUsernameKey(model.username);
+      if (!usernameKey) return;
+
+      const list = usernameToIndexes.get(usernameKey) || [];
       list.push(index);
-      usernameToIndexes.set(model.username, list);
-      targetUsernames.add(model.username);
+      usernameToIndexes.set(usernameKey, list);
+      targetUsernames.add(usernameKey);
     });
 
     if (!targetUsernames.size) return nextModels;
@@ -119,14 +129,30 @@
       onlineCount = page.onlineCount;
 
       page.rooms.forEach((room) => {
-        if (!targetUsernames.has(room.username)) return;
-        const indexes = usernameToIndexes.get(room.username) || [];
+        const usernameKey = getChaturbateUsernameKey(room.username);
+        if (!targetUsernames.has(usernameKey)) return;
+        const indexes = usernameToIndexes.get(usernameKey) || [];
         indexes.forEach((index) => patchChaturbateModelFromRoom(nextModels[index], room, true));
-        targetUsernames.delete(room.username);
+        targetUsernames.delete(usernameKey);
       });
 
       offset += limit;
     }
+
+    targetUsernames.forEach((usernameKey) => {
+      const indexes = usernameToIndexes.get(usernameKey) || [];
+      indexes.forEach((index) => {
+        nextModels[index] = {
+          ...nextModels[index],
+          status: normalizeModelStatus(nextModels[index].status, {
+            online: false,
+            viewers: 0,
+            showType: "offline",
+            roomStatus: "offline"
+          })
+        };
+      });
+    });
 
     return nextModels;
   }

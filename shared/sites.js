@@ -51,8 +51,11 @@
     }
   }
 
-  function getUsernameFromPath(pathname) {
-    const [username] = String(pathname || "").split("/").filter(Boolean);
+  function getUsernameFromPath(pathname, siteId = "") {
+    const pathParts = String(pathname || "").split("/").filter(Boolean);
+    const username = siteId === "chaturbate" && pathParts[0] === "roomlogin"
+      ? pathParts[1]
+      : pathParts[0];
     return getCleanString(username);
   }
 
@@ -62,7 +65,7 @@
       const site = findSiteByHost(parsedUrl.hostname);
       if (!site) return null;
 
-      const username = getUsernameFromPath(parsedUrl.pathname);
+      const username = getUsernameFromPath(parsedUrl.pathname, site.id);
       if (!username) return null;
 
       return {
@@ -174,15 +177,20 @@
 
   function normalizeRoomStatus(value) {
     const roomStatus = String(value || "").toLowerCase();
+    if (roomStatus === "password-required") {
+      return "room pass";
+    }
+
     if (
       roomStatus === "public" ||
       roomStatus === "private" ||
       roomStatus === "group" ||
+      roomStatus === "region" ||
+      roomStatus === "room pass" ||
       roomStatus === "offline" ||
-      roomStatus === "password" ||
-      roomStatus === "password-required"
+      roomStatus === "password"
     ) {
-      return roomStatus === "password-required" ? "password" : roomStatus;
+      return roomStatus;
     }
     return "offline";
   }
@@ -224,7 +232,10 @@
     const hasViewers = Object.prototype.hasOwnProperty.call(payload, "viewers");
     const online = hasOnline ? Boolean(payload.online) : Boolean(previousStatus.online);
     const previousViewers = toFiniteCount(previousStatus.viewers, 0);
-    const hasTimeSinceLastBroadcast = Object.prototype.hasOwnProperty.call(payload, "timeSinceLastBroadcast");
+    const hasTimeSinceLastBroadcast = (
+      Object.prototype.hasOwnProperty.call(payload, "timeSinceLastBroadcast") &&
+      payload.timeSinceLastBroadcast !== undefined
+    );
     const roomStatus = resolveEffectiveShowType(
       payload.roomStatus || payload.showType,
       payload.online ? "public" : (hasOnline ? "offline" : previousStatus.roomStatus || previousStatus.showType)

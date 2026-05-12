@@ -69,6 +69,8 @@ function normalizeImportedModel(model, index = 0) {
     addedAt: resolveAddedAt(model, index),
     profileUrl: roomUrl,
     thumbnailUrl: "",
+    previewUrl: "",
+    linkedRooms: normalizeImportedLinkedRooms(model.linkedRooms || model.links),
     status: {
       online: false,
       showType: "offline",
@@ -80,6 +82,41 @@ function normalizeImportedModel(model, index = 0) {
       timeSinceLastBroadcast: null
     }
   };
+}
+
+function normalizeImportedLinkedRooms(rooms) {
+  if (!Array.isArray(rooms)) return [];
+
+  return rooms
+    .map((room) => {
+      if (!room || typeof room !== "object") return null;
+      const roomUrl = getCleanString(room.roomUrl || room.profileUrl || room.url);
+      const parsedFromUrl = roomUrl ? parseModelFromUrl(roomUrl) : null;
+      const site = getCleanString(room.site) || parsedFromUrl?.site || "";
+      const username = getCleanString(room.username || room.userName) || parsedFromUrl?.username || "";
+      if (!site || !username) return null;
+
+      return {
+        id: buildModelId(site, username),
+        site,
+        username,
+        displayName: getCleanString(room.displayName) || username,
+        profileUrl: roomUrl || defaultProfileUrl(site, username),
+        thumbnailUrl: "",
+        previewUrl: "",
+        status: {
+          online: false,
+          showType: "offline",
+          viewers: 0,
+          startDtUtc: null,
+          startTimestamp: null,
+          roomStatus: "offline",
+          lastBroadcast: null,
+          timeSinceLastBroadcast: null
+        }
+      };
+    })
+    .filter(Boolean);
 }
 
 function resolveAddedAt(model, index) {
