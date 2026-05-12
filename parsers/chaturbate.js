@@ -10,7 +10,7 @@ export function parseChaturbateRoom(room) {
     thumbnailUrl: room.img,
 
     status: {
-      online: true, // якщо є в room-list → онлайн
+      online: true,
       showType: room.current_show || "public",
       lastSeen: Date.now(),
       viewers: room.num_users || 0
