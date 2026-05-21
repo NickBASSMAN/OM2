@@ -13,8 +13,11 @@
   const BONGA_MAX_PAGES = 100;
   const STRIPCHAT_MODELS_URL = "https://stripchat.com/api/front/models";
   const STRIPCHAT_SNAPSHOTS_URL = "https://stripchat.com/api/front/models/snapshots";
+  const STRIPCHAT_BASE_URL = "https://stripchat.com";
   const STRIPCHAT_MODELS_LIMIT = 90;
   const STRIPCHAT_MAX_PAGES = 100;
+  const STRIPCHAT_STATUS_MAX_PAGES = 5;
+  const STRIPCHAT_FETCH_TIMEOUT_MS = 6000;
   const STRIPCHAT_FRONT_VERSION = "11.6.74";
   const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 
@@ -295,6 +298,14 @@
     };
   }
 
+  function getStripchatPageRequestHeaders(username) {
+    return {
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Referer: `${STRIPCHAT_BASE_URL}/${encodeURIComponent(username)}`,
+      "front-version": STRIPCHAT_FRONT_VERSION
+    };
+  }
+
   function buildStripchatModelsUrl(offset, limit, options = {}) {
     const url = new URL(STRIPCHAT_MODELS_URL);
     const primaryTag = options.primaryTag || "girls";
@@ -359,6 +370,99 @@
     }).filter((model) => model.username);
   }
 
+  function decodeHtmlJsonString(value) {
+    if (!value || typeof value !== "string") return "";
+
+    return value
+      .replace(/\\u0026/g, "&")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+  }
+
+  function readStripchatPageString(text, key) {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`, "i"));
+    return decodeHtmlJsonString(match?.[1] || "");
+  }
+
+  function readStripchatPageNumber(text, key) {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*(\\d+)`, "i"));
+    const value = Number(match?.[1]);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function readStripchatPageBoolean(text, key) {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*(true|false)`, "i"));
+    return match ? match[1] === "true" : null;
+  }
+
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function getStripchatUsernameContext(username, text) {
+    const match = text.match(new RegExp(`"username"\\s*:\\s*"${escapeRegExp(username)}"`, "i"));
+    if (!match || typeof match.index !== "number") return text;
+
+    const start = Math.max(0, match.index - 1000);
+    const end = Math.min(text.length, match.index + 3000);
+    return text.slice(start, end);
+  }
+
+  function parseStripchatRoomPage(username, text) {
+    if (!text || typeof text !== "string") return null;
+
+    const context = getStripchatUsernameContext(username, text);
+    const usernameKey = getUsernameKey(username);
+    const pageUsername = readStripchatPageString(context, "username");
+    const streamName = readStripchatPageString(context, "streamName") || pageUsername || username;
+    const pageUsernameKey = getUsernameKey(pageUsername || streamName);
+    if (pageUsernameKey && pageUsernameKey !== usernameKey) return null;
+
+    const isOnline = readStripchatPageBoolean(context, "isOnline");
+    const status = readStripchatPageString(context, "status");
+    const viewers = readStripchatPageNumber(context, "viewersCount") ?? readStripchatPageNumber(context, "viewers");
+    const statusChangedAt = readStripchatPageString(context, "statusChangedAt");
+    const displayName = readStripchatPageString(context, "displayName") || pageUsername || username;
+    const online = isOnline === null
+      ? normalizeStripchatRoomStatus(status, Boolean(viewers)) !== "offline"
+      : isOnline;
+
+    if (!pageUsername && isOnline === null && !status && viewers === null) return null;
+
+    return {
+      id: username,
+      username,
+      name: username,
+      displayName,
+      streamName,
+      online,
+      viewers: toFiniteCount(viewers, 0),
+      status: normalizeStripchatRoomStatus(status, online),
+      thumbnail: "",
+      previewUrl: "",
+      statusChangedAt: statusChangedAt || null,
+      raw: null
+    };
+  }
+
+  async function fetchStripchatRoomPageStatus(username, options = {}) {
+    const response = await fetchWithTimeout(`${STRIPCHAT_BASE_URL}/${encodeURIComponent(username)}`, {
+      credentials: "include",
+      headers: getStripchatPageRequestHeaders(username)
+    }, options.timeoutMs || STRIPCHAT_FETCH_TIMEOUT_MS);
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Stripchat room page request failed with status ${response.status}`);
+    }
+
+    if (isCloudflareChallenge(text)) {
+      throw new Error("Stripchat Cloudflare challenge");
+    }
+
+    return parseStripchatRoomPage(username, text);
+  }
+
   function getStripchatModelsTotal(data) {
     const total = Number(
       data?.total ||
@@ -375,7 +479,7 @@
     const response = await fetchWithTimeout(buildStripchatSnapshotsUrl(options), {
       credentials: "include",
       headers: getStripchatRequestHeaders()
-    });
+    }, options.timeoutMs || STRIPCHAT_FETCH_TIMEOUT_MS);
     const text = await response.text();
 
     if (!response.ok) {
@@ -391,12 +495,16 @@
   }
 
   async function fetchStripchatModelsPage(offset = 0, limit = STRIPCHAT_MODELS_LIMIT, options = {}) {
+    const shouldFetchSnapshots = options.includeSnapshots !== false && offset === 0;
+    const snapshotsPromise = shouldFetchSnapshots
+      ? fetchStripchatSnapshots(options).catch(() => ({}))
+      : Promise.resolve({});
     const [modelsResponse, snapshots] = await Promise.all([
       fetchWithTimeout(buildStripchatModelsUrl(offset, limit, options), {
         credentials: "include",
         headers: getStripchatRequestHeaders()
-      }),
-      fetchStripchatSnapshots(options).catch(() => ({}))
+      }, options.timeoutMs || STRIPCHAT_FETCH_TIMEOUT_MS),
+      snapshotsPromise
     ]);
 
     if (!modelsResponse.ok) {
@@ -426,8 +534,11 @@
     let total = Infinity;
     let pages = 0;
     const limit = Number(options.limit) || STRIPCHAT_MODELS_LIMIT;
+    const maxPages = Number.isFinite(Number(options.maxPages)) && Number(options.maxPages) > 0
+      ? Number(options.maxPages)
+      : STRIPCHAT_MAX_PAGES;
 
-    while (offset < total && pages < STRIPCHAT_MAX_PAGES) {
+    while (offset < total && pages < maxPages) {
       const page = await fetchStripchatModelsPage(offset, limit, options);
       const models = page.models;
 
@@ -460,12 +571,26 @@
     return usernames ? Array.from(foundByUsername.values()) : allModels;
   }
 
-  async function fetchStripchatModelsByUsernames(usernames) {
-    return fetchStripchatModels({ usernames });
+  async function fetchStripchatModelsByUsernames(usernames, options = {}) {
+    return fetchStripchatModels({ ...options, usernames });
   }
 
-  async function fetchStripchatModelStatus(username) {
-    const rooms = await fetchStripchatModelsByUsernames([username]);
+  async function fetchStripchatModelStatus(username, options = {}) {
+    if (options.useRoomPage !== false) {
+      try {
+        const room = await fetchStripchatRoomPageStatus(username, options);
+        if (room) return room;
+      } catch (error) {
+        console.warn("Stripchat room page status failed:", username, error);
+      }
+    }
+
+    if (options.useListing === false) return null;
+
+    const rooms = await fetchStripchatModelsByUsernames([username], {
+      maxPages: STRIPCHAT_STATUS_MAX_PAGES,
+      ...options
+    });
     return rooms.find((room) => getUsernameKey(room.username || room.id) === getUsernameKey(username)) || null;
   }
 
@@ -649,6 +774,7 @@
       fetchStripchatModels,
       fetchStripchatModelsByUsernames,
       fetchStripchatModelsPage,
+      fetchStripchatRoomPageStatus,
       fetchStripchatSnapshots,
       normalizeStripchatModelsResponse
     }

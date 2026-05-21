@@ -7,6 +7,8 @@
   const chaturbateApi = global.OnlineModeli.chaturbateApi || {};
   const bongaApi = global.OnlineModeli.bongaApi || {};
   const stripchatApi = global.OnlineModeli.stripchatApi || {};
+  const STRIPCHAT_STATUS_REFRESH_MAX_PAGES = 5;
+  const STRIPCHAT_ROOM_PAGE_CONCURRENCY = 3;
 
   function createOfflineStatus() {
     return {
@@ -385,13 +387,13 @@
     return "public";
   }
 
-  async function fetchStripchatRoomsForUsernames(usernames) {
+  async function fetchStripchatRoomsForUsernames(usernames, options = {}) {
     if (stripchatApi.fetchStripchatModelsByUsernames) {
-      return stripchatApi.fetchStripchatModelsByUsernames(usernames);
+      return stripchatApi.fetchStripchatModelsByUsernames(usernames, options);
     }
 
     if (stripchatApi.fetchStripchatModels) {
-      return stripchatApi.fetchStripchatModels({ usernames });
+      return stripchatApi.fetchStripchatModels({ ...options, usernames });
     }
 
     return [];
@@ -449,7 +451,12 @@
 
       if (!room && !options.skipFetch) {
         room = stripchatApi.fetchStripchatModelStatus
-          ? await stripchatApi.fetchStripchatModelStatus(model.username)
+          ? await stripchatApi.fetchStripchatModelStatus(model.username, {
+            includeSnapshots: false,
+            maxPages: STRIPCHAT_STATUS_REFRESH_MAX_PAGES,
+            timeoutMs: 4000,
+            useListing: options.useListingFallback !== false
+          })
           : null;
       }
 
@@ -471,6 +478,23 @@
     }
   }
 
+  async function mapStripchatWithConcurrency(items, mapper, concurrency = STRIPCHAT_ROOM_PAGE_CONCURRENCY) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < items.length) {
+        const index = nextIndex;
+        nextIndex++;
+        results[index] = await mapper(items[index], index);
+      }
+    }
+
+    const workerCount = Math.min(concurrency, items.length);
+    await Promise.all(Array.from({ length: workerCount }, worker));
+    return results;
+  }
+
   async function enrichStripchatOnlineModelsFromListing(models) {
     const nextModels = models.map((model) => ({
       ...model,
@@ -484,18 +508,21 @@
 
     try {
       const targetUsernames = targetIndexes.map(({ model }) => model.username);
-      const rooms = await fetchStripchatRoomsForUsernames(targetUsernames);
+      const rooms = await fetchStripchatRoomsForUsernames(targetUsernames, {
+        includeSnapshots: false,
+        maxPages: STRIPCHAT_STATUS_REFRESH_MAX_PAGES
+      });
       const roomsByUsername = new Map(rooms.map((room) => {
         return [getStripchatUsernameKey(room.username || room.id), room];
       }));
 
-      await Promise.all(targetIndexes.map(async ({ model, index }) => {
-        nextModels[index] = await updateStripchatModel(
-          model,
-          roomsByUsername.get(getStripchatUsernameKey(model.username)),
-          { skipFetch: true }
-        );
-      }));
+      await mapStripchatWithConcurrency(targetIndexes, async ({ model, index }) => {
+        const room = roomsByUsername.get(getStripchatUsernameKey(model.username));
+        nextModels[index] = await updateStripchatModel(model, room, {
+          skipFetch: Boolean(room),
+          useListingFallback: false
+        });
+      });
     } catch (error) {
       console.error("Stripchat listing update failed:", error);
     }
