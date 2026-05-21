@@ -8,6 +8,8 @@ const {
 } = globalThis.OnlineModeli.sites;
 const siteAdapters = globalThis.OnlineModeli.backgroundAdapters;
 const bongaApi = globalThis.OnlineModeli.bongaApi || {};
+const MODELS_UPDATED_AT_KEY = "modelsLastUpdatedAt";
+const AUTO_UPDATE_TTL_MS = 2 * 60 * 1000;
 
 let updateAllInFlight = null;
 let updateAllQueued = false;
@@ -105,11 +107,10 @@ async function enrichModelsBasic(models) {
     const updatedModel = adapter?.enrichModelBasic
       ? await adapter.enrichModelBasic(primaryModel)
       : primaryModel;
-    const linkedRooms = await updateLinkedRooms(updatedModel.linkedRooms);
     return applyLinkedRoomSummary({
       ...updatedModel,
+      linkedRooms: model.linkedRooms,
       primaryRoomStatus: updatedModel.status,
-      linkedRooms
     });
   }));
 }
@@ -124,6 +125,60 @@ async function enrichOnlineModels(models) {
   }
 
   return nextModels;
+}
+
+function collectTrackedRooms(models) {
+  const roomsById = new Map();
+
+  (models || []).forEach((model) => {
+    const primaryRoom = {
+      ...getPrimaryRoomModel(model),
+      linkedRooms: []
+    };
+
+    if (primaryRoom.id) {
+      roomsById.set(primaryRoom.id, primaryRoom);
+    }
+
+    (model.linkedRooms || [])
+      .map(normalizeLinkedRoomIdentity)
+      .filter(Boolean)
+      .forEach((room) => {
+        if (!roomsById.has(room.id)) {
+          roomsById.set(room.id, room);
+        }
+      });
+  });
+
+  return [...roomsById.values()];
+}
+
+async function enrichTrackedRooms(models) {
+  const trackedRooms = collectTrackedRooms(models);
+  if (!trackedRooms.length) return models;
+
+  const updatedRooms = await enrichOnlineModels(trackedRooms);
+  const updatedRoomsById = new Map(
+    (updatedRooms || [])
+      .filter((room) => room?.id)
+      .map((room) => [room.id, room])
+  );
+
+  return (models || []).map((model) => {
+    const updatedPrimaryRoom = updatedRoomsById.get(model.id) || getPrimaryRoomModel(model);
+    const linkedRooms = (model.linkedRooms || [])
+      .map(normalizeLinkedRoomIdentity)
+      .filter(Boolean)
+      .map((room) => normalizeLinkedRoomIdentity(updatedRoomsById.get(room.id) || room))
+      .filter(Boolean);
+
+    return applyLinkedRoomSummary({
+      ...model,
+      ...updatedPrimaryRoom,
+      linkedRooms,
+      primaryRoomStatus: updatedPrimaryRoom.status
+    });
+  });
 }
 
 function getModelsIdentityKey(models) {
@@ -156,12 +211,7 @@ async function performUpdateAllModelsOnce() {
 
   await browser.storage.local.set({ models: phaseOneModels });
 
-  const phaseTwoPrimaryModels = phaseOneModels.map(getPrimaryRoomModel);
-  const phaseTwoModels = (await enrichOnlineModels(phaseTwoPrimaryModels))
-    .map((model) => applyLinkedRoomSummary({
-      ...model,
-      primaryRoomStatus: model.status
-    }));
+  const phaseTwoModels = await enrichTrackedRooms(phaseOneModels);
   const latestAfterPhaseOneData = await browser.storage.local.get("models");
   const latestAfterPhaseOneModels = (latestAfterPhaseOneData.models || [])
     .map(normalizeModelIdentity)
@@ -172,25 +222,46 @@ async function performUpdateAllModelsOnce() {
     return { updated: true, phaseOneOnly: true, count: phaseOneModels.length };
   }
 
-  await browser.storage.local.set({ models: phaseTwoModels });
+  await browser.storage.local.set({
+    models: phaseTwoModels,
+    [MODELS_UPDATED_AT_KEY]: Date.now()
+  });
   return { updated: true, count: phaseTwoModels.length };
 }
 
-async function runUpdateAllQueue() {
+async function shouldSkipAutomaticUpdate(message = {}) {
+  if (message.force) return false;
+  if (message.reason !== "popup_open") return false;
+
+  const data = await browser.storage.local.get(["models", MODELS_UPDATED_AT_KEY]);
+  const models = Array.isArray(data.models) ? data.models : [];
+  if (!models.length) return true;
+
+  const lastUpdatedAt = Number(data[MODELS_UPDATED_AT_KEY]) || 0;
+  return Date.now() - lastUpdatedAt < AUTO_UPDATE_TTL_MS;
+}
+
+async function runUpdateAllQueue(options = {}) {
   if (updateAllInFlight) {
+    if (options.queueIfInFlight === false) {
+      return updateAllInFlight;
+    }
+
     updateAllQueued = true;
     return updateAllInFlight;
   }
 
   updateAllInFlight = (async () => {
+    let result = null;
     do {
       updateAllQueued = false;
-      await performUpdateAllModelsOnce();
+      result = await performUpdateAllModelsOnce();
     } while (updateAllQueued);
+    return result;
   })();
 
   try {
-    await updateAllInFlight;
+    return await updateAllInFlight;
   } finally {
     updateAllInFlight = null;
   }
@@ -316,8 +387,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "REQUEST_UPDATE_ALL_MODELS") {
-    runUpdateAllQueue().then(() => {
-      sendResponse({ success: true });
+    shouldSkipAutomaticUpdate(message).then((skip) => {
+      if (skip) return { skipped: true, reason: "fresh_cache" };
+      return runUpdateAllQueue({
+        queueIfInFlight: message.force || message.reason !== "popup_open"
+      });
+    }).then((result) => {
+      sendResponse({ success: true, ...(result || {}) });
     }).catch((error) => {
       console.error("Error updating all models:", error);
       sendResponse({ success: false, error: error.message });

@@ -6,6 +6,7 @@
   } = global.OnlineModeli.sites;
   const chaturbateApi = global.OnlineModeli.chaturbateApi || {};
   const bongaApi = global.OnlineModeli.bongaApi || {};
+  const stripchatApi = global.OnlineModeli.stripchatApi || {};
 
   function createOfflineStatus() {
     return {
@@ -53,6 +54,20 @@
     return String(username || "").trim().toLowerCase();
   }
 
+  function getChaturbateRestrictedRoomStatus(code) {
+    if (code === "access-denied") return "region";
+    if (code === "password-required") return "room pass";
+    return "";
+  }
+
+  function getPreservedChaturbateOfflineStatus(status = {}) {
+    const roomStatus = status.roomStatus || status.showType;
+    if (roomStatus === "region" || roomStatus === "room pass" || roomStatus === "password") {
+      return roomStatus;
+    }
+    return "offline";
+  }
+
   async function updateChaturbateModel(model, roomHint = null) {
     try {
       let payload;
@@ -88,7 +103,18 @@
       };
     } catch (error) {
       if (error?.status === 401) {
-        return model;
+        const roomStatus = getChaturbateRestrictedRoomStatus(error?.code);
+        if (!roomStatus) return model;
+
+        return {
+          ...model,
+          status: normalizeModelStatus(model.status, {
+            online: false,
+            viewers: 0,
+            showType: roomStatus,
+            roomStatus
+          })
+        };
       }
 
       console.error("Biocontext update failed for model", model.id, error);
@@ -142,13 +168,14 @@
     targetUsernames.forEach((usernameKey) => {
       const indexes = usernameToIndexes.get(usernameKey) || [];
       indexes.forEach((index) => {
+        const roomStatus = getPreservedChaturbateOfflineStatus(nextModels[index].status);
         nextModels[index] = {
           ...nextModels[index],
           status: normalizeModelStatus(nextModels[index].status, {
             online: false,
             viewers: 0,
-            showType: "offline",
-            roomStatus: "offline"
+            showType: roomStatus,
+            roomStatus
           })
         };
       });
@@ -252,14 +279,16 @@
     };
   }
 
-  async function buildBongaPayload(room, previousStatus = {}, username = "") {
+  async function buildBongaPayload(room, previousStatus = {}, username = "", options = {}) {
+    const quick = Boolean(options.quick);
+
     if (!room) {
-      const roomDetails = await fetchBongaRoomDetails(username);
+      const roomDetails = quick ? null : await fetchBongaRoomDetails(username);
       return buildOfflineBongaPayload(previousStatus, roomDetails);
     }
 
     const roomStatus = normalizeBongaRoomStatus(room.status);
-    const sessionTs = await fetchBongaSessionTimestamp(room.username || room.id);
+    const sessionTs = quick ? null : await fetchBongaSessionTimestamp(room.username || room.id);
 
     return {
       thumbnailUrl: room.thumbnail || "",
@@ -282,7 +311,7 @@
     };
   }
 
-  async function updateBongaModel(model, roomHint = null) {
+  async function updateBongaModel(model, roomHint = null, options = {}) {
     try {
       let room = roomHint;
 
@@ -294,7 +323,7 @@
         });
       }
 
-      const payload = await buildBongaPayload(room, model.status, model.username);
+      const payload = await buildBongaPayload(room, model.status, model.username, options);
       const previousThumbnailUrl = isInvalidBongaMediaUrl(model.thumbnailUrl) ? "" : model.thumbnailUrl;
       const previousPreviewUrl = isInvalidBongaMediaUrl(model.previewUrl) ? "" : model.previewUrl;
       return {
@@ -335,11 +364,140 @@
       await Promise.all(targetIndexes.map(async ({ model, index }) => {
         nextModels[index] = await updateBongaModel(
           model,
-          roomsByUsername.get(getBongaUsernameKey(model.username))
+          roomsByUsername.get(getBongaUsernameKey(model.username)),
+          { quick: true }
         );
       }));
     } catch (error) {
       console.error("BongaCams listing update failed:", error);
+    }
+
+    return nextModels;
+  }
+
+  function getStripchatUsernameKey(username) {
+    return String(username || "").trim().toLowerCase();
+  }
+
+  function normalizeStripchatRoomStatus(status, online) {
+    if (!online) return "offline";
+    if (status === "public" || status === "private" || status === "group") return status;
+    return "public";
+  }
+
+  async function fetchStripchatRoomsForUsernames(usernames) {
+    if (stripchatApi.fetchStripchatModelsByUsernames) {
+      return stripchatApi.fetchStripchatModelsByUsernames(usernames);
+    }
+
+    if (stripchatApi.fetchStripchatModels) {
+      return stripchatApi.fetchStripchatModels({ usernames });
+    }
+
+    return [];
+  }
+
+  function buildOfflineStripchatPayload(previousStatus = {}) {
+    return {
+      ...createOfflineStatus(),
+      thumbnailUrl: "",
+      previewUrl: "",
+      lastSeenOnlineAt: previousStatus.online
+        ? new Date().toISOString()
+        : (previousStatus.lastSeenOnlineAt || null)
+    };
+  }
+
+  function parseIsoDate(value) {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+  }
+
+  function buildStripchatPayload(room, previousStatus = {}) {
+    if (!room) return buildOfflineStripchatPayload(previousStatus);
+
+    const online = room.online !== false;
+    const roomStatus = normalizeStripchatRoomStatus(room.status, online);
+    const statusChangedAt = parseIsoDate(room.statusChangedAt);
+
+    return {
+      thumbnailUrl: room.thumbnail || "",
+      previewUrl: room.previewUrl || room.thumbnail || "",
+      displayName: room.displayName || room.name || room.username || room.id || "",
+      online,
+      viewers: online ? toFiniteCount(room.viewers, 0) : 0,
+      showType: roomStatus,
+      roomStatus,
+      startDtUtc: statusChangedAt,
+      startTimestamp: statusChangedAt ? Date.parse(statusChangedAt) : null,
+      lastBroadcast: null,
+      timeSinceLastBroadcast: null,
+      lastSeenOnlineAt: online
+        ? new Date().toISOString()
+        : (previousStatus.lastSeenOnlineAt || null),
+      platformData: {
+        stripchat: {
+          streamName: room.streamName || room.username || null
+        }
+      }
+    };
+  }
+
+  async function updateStripchatModel(model, roomHint = null, options = {}) {
+    try {
+      let room = roomHint;
+
+      if (!room && !options.skipFetch) {
+        room = stripchatApi.fetchStripchatModelStatus
+          ? await stripchatApi.fetchStripchatModelStatus(model.username)
+          : null;
+      }
+
+      const payload = buildStripchatPayload(room, model.status);
+      return {
+        ...model,
+        displayName: payload.displayName || model.displayName || model.username,
+        thumbnailUrl: payload.thumbnailUrl || model.thumbnailUrl,
+        previewUrl: payload.previewUrl || model.previewUrl || payload.thumbnailUrl || model.thumbnailUrl,
+        platformData: {
+          ...(model.platformData || {}),
+          ...(payload.platformData || {})
+        },
+        status: normalizeModelStatus(model.status, payload)
+      };
+    } catch (error) {
+      console.error("Error updating Stripchat model", model.id, error);
+      return model;
+    }
+  }
+
+  async function enrichStripchatOnlineModelsFromListing(models) {
+    const nextModels = models.map((model) => ({
+      ...model,
+      status: { ...(model.status || {}) }
+    }));
+    const targetIndexes = nextModels
+      .map((model, index) => ({ model, index }))
+      .filter(({ model }) => model.site === "stripchat");
+
+    if (!targetIndexes.length) return nextModels;
+
+    try {
+      const targetUsernames = targetIndexes.map(({ model }) => model.username);
+      const rooms = await fetchStripchatRoomsForUsernames(targetUsernames);
+      const roomsByUsername = new Map(rooms.map((room) => {
+        return [getStripchatUsernameKey(room.username || room.id), room];
+      }));
+
+      await Promise.all(targetIndexes.map(async ({ model, index }) => {
+        nextModels[index] = await updateStripchatModel(
+          model,
+          roomsByUsername.get(getStripchatUsernameKey(model.username)),
+          { skipFetch: true }
+        );
+      }));
+    } catch (error) {
+      console.error("Stripchat listing update failed:", error);
     }
 
     return nextModels;
@@ -375,7 +533,13 @@
         },
         enrichOnlineModels: enrichBongaOnlineModelsFromListing
       },
-      stripchat: createUnsupportedSiteAdapter("stripchat")
+      stripchat: {
+        updateModel: updateStripchatModel,
+        async enrichModelBasic(model) {
+          return model;
+        },
+        enrichOnlineModels: enrichStripchatOnlineModelsFromListing
+      }
     }
   };
 })(globalThis);

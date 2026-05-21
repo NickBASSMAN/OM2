@@ -11,6 +11,30 @@
   const BONGA_MODELS_URL = "https://bongacams.com/tools/listing_v3.php";
   const BONGA_MODELS_LIMIT = 144;
   const BONGA_MAX_PAGES = 100;
+  const STRIPCHAT_MODELS_URL = "https://stripchat.com/api/front/models";
+  const STRIPCHAT_SNAPSHOTS_URL = "https://stripchat.com/api/front/models/snapshots";
+  const STRIPCHAT_MODELS_LIMIT = 90;
+  const STRIPCHAT_MAX_PAGES = 100;
+  const STRIPCHAT_FRONT_VERSION = "11.6.74";
+  const DEFAULT_FETCH_TIMEOUT_MS = 8000;
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
+    if (typeof AbortController !== "function") {
+      return fetch(url, options);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: options.signal || controller.signal
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   function createOfflineStatus() {
     return {
@@ -28,7 +52,7 @@
 
   async function fetchChaturbateBioStatus(username) {
     const url = `https://chaturbate.com/api/biocontext/${encodeURIComponent(username)}/?`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       const error = new Error(`Biocontext request failed with status ${response.status}`);
       error.status = response.status;
@@ -85,7 +109,7 @@
 
   async function fetchChaturbateRoomsPage(offset = 0, limit = CHATURBATE_LIMIT) {
     const url = `${CHATURBATE_API_URL}?limit=${limit}&offset=${offset}`;
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       throw new Error(`Room-list request failed with status ${response.status}`);
     }
@@ -264,6 +288,187 @@
     return String(username || "").trim().toLowerCase();
   }
 
+  function getStripchatRequestHeaders() {
+    return {
+      Accept: "*/*",
+      "front-version": STRIPCHAT_FRONT_VERSION
+    };
+  }
+
+  function buildStripchatModelsUrl(offset, limit, options = {}) {
+    const url = new URL(STRIPCHAT_MODELS_URL);
+    const primaryTag = options.primaryTag || "girls";
+    url.searchParams.set("removeShows", "true");
+    url.searchParams.set("recInFeatured", "false");
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("offset", String(offset));
+    if (primaryTag) url.searchParams.set("primaryTag", primaryTag);
+    url.searchParams.set("sortBy", options.sortBy || "viewersRating");
+    url.searchParams.set("uniq", Math.random().toString(36).slice(2));
+    return url.toString();
+  }
+
+  function buildStripchatSnapshotsUrl(options = {}) {
+    const url = new URL(STRIPCHAT_SNAPSHOTS_URL);
+    const primaryTag = options.primaryTag || "girls";
+    url.searchParams.set("type", options.type || "popular");
+    if (primaryTag) url.searchParams.set("primaryTag", primaryTag);
+    url.searchParams.set("uniq", Math.random().toString(36).slice(2));
+    return url.toString();
+  }
+
+  function normalizeStripchatRoomStatus(status, online) {
+    if (!online) return "offline";
+    if (status === "public" || status === "private" || status === "group") return status;
+    return "public";
+  }
+
+  function buildStripchatThumbnailUrl(model, snapshots = {}) {
+    const streamName = model?.streamName || model?.username;
+    const snapshotId = streamName ? snapshots[streamName] : null;
+    if (snapshotId && streamName) {
+      return `https://img.doppiocdn.media/thumbs/${snapshotId}/${streamName}`;
+    }
+
+    return model?.thumbnailUrl || model?.snapshotUrl || model?.avatarUrl || "";
+  }
+
+  function normalizeStripchatModelsResponse(data, snapshots = {}) {
+    const models = Array.isArray(data?.models) ? data.models : [];
+
+    return models.map((model) => {
+      const username = model.username || model.userName || model.streamName || "";
+      const online = Boolean(model.isOnline);
+      const roomStatus = normalizeStripchatRoomStatus(model.status, online);
+      const normalized = {
+        id: username,
+        username,
+        name: username,
+        displayName: model.displayName || model.display_name || username,
+        streamName: model.streamName || username,
+        online,
+        viewers: toFiniteCount(model.viewersCount ?? model.viewers, 0),
+        status: roomStatus,
+        thumbnail: buildStripchatThumbnailUrl(model, snapshots),
+        statusChangedAt: model.statusChangedAt || null,
+        raw: model
+      };
+
+      normalized.previewUrl = normalized.thumbnail;
+      return normalized;
+    }).filter((model) => model.username);
+  }
+
+  function getStripchatModelsTotal(data) {
+    const total = Number(
+      data?.total ||
+      data?.total_count ||
+      data?.count ||
+      data?.modelsCount ||
+      data?.models_count
+    );
+
+    return Number.isFinite(total) && total >= 0 ? total : null;
+  }
+
+  async function fetchStripchatSnapshots(options = {}) {
+    const response = await fetchWithTimeout(buildStripchatSnapshotsUrl(options), {
+      credentials: "include",
+      headers: getStripchatRequestHeaders()
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Stripchat snapshots request failed with status ${response.status}`);
+    }
+
+    if (isCloudflareChallenge(text)) {
+      throw new Error("Stripchat Cloudflare challenge");
+    }
+
+    const json = JSON.parse(text);
+    return json?.snapshots || {};
+  }
+
+  async function fetchStripchatModelsPage(offset = 0, limit = STRIPCHAT_MODELS_LIMIT, options = {}) {
+    const [modelsResponse, snapshots] = await Promise.all([
+      fetchWithTimeout(buildStripchatModelsUrl(offset, limit, options), {
+        credentials: "include",
+        headers: getStripchatRequestHeaders()
+      }),
+      fetchStripchatSnapshots(options).catch(() => ({}))
+    ]);
+
+    if (!modelsResponse.ok) {
+      throw new Error(`Stripchat models request failed with status ${modelsResponse.status}`);
+    }
+
+    const text = await modelsResponse.text();
+    if (isCloudflareChallenge(text)) {
+      throw new Error("Stripchat Cloudflare challenge");
+    }
+
+    const json = JSON.parse(text);
+    return {
+      models: normalizeStripchatModelsResponse(json, snapshots),
+      total: getStripchatModelsTotal(json),
+      raw: json
+    };
+  }
+
+  async function fetchStripchatModels(options = {}) {
+    const usernames = Array.isArray(options.usernames)
+      ? new Set(options.usernames.map(getUsernameKey).filter(Boolean))
+      : null;
+    const foundByUsername = new Map();
+    const allModels = [];
+    let offset = 0;
+    let total = Infinity;
+    let pages = 0;
+    const limit = Number(options.limit) || STRIPCHAT_MODELS_LIMIT;
+
+    while (offset < total && pages < STRIPCHAT_MAX_PAGES) {
+      const page = await fetchStripchatModelsPage(offset, limit, options);
+      const models = page.models;
+
+      total = page.total ?? Infinity;
+      pages++;
+
+      models.forEach((model) => {
+        if (usernames) {
+          const usernameKey = getUsernameKey(model.username || model.id);
+          if (usernames.has(usernameKey)) {
+            foundByUsername.set(usernameKey, model);
+          }
+          return;
+        }
+
+        allModels.push(model);
+      });
+
+      if (usernames && foundByUsername.size >= usernames.size) {
+        break;
+      }
+
+      if (models.length < limit) {
+        break;
+      }
+
+      offset += limit;
+    }
+
+    return usernames ? Array.from(foundByUsername.values()) : allModels;
+  }
+
+  async function fetchStripchatModelsByUsernames(usernames) {
+    return fetchStripchatModels({ usernames });
+  }
+
+  async function fetchStripchatModelStatus(username) {
+    const rooms = await fetchStripchatModelsByUsernames([username]);
+    return rooms.find((room) => getUsernameKey(room.username || room.id) === getUsernameKey(username)) || null;
+  }
+
   function normalizeBongaModelsResponse(data) {
     if (!data || !Array.isArray(data.models)) return [];
 
@@ -310,7 +515,7 @@
   }
 
   async function fetchBongaModelsPage(offset = 0, limit = BONGA_MODELS_LIMIT) {
-    const response = await fetch(buildBongaModelsUrl(offset, limit), {
+    const response = await fetchWithTimeout(buildBongaModelsUrl(offset, limit), {
       method: "GET",
       credentials: "include",
       headers: {
@@ -389,7 +594,7 @@
     body.append("args[]", "");
     body.append("args[]", "");
 
-    const response = await fetch(`https://bongacams.com/tools/amf.php?t=${Date.now()}`, {
+    const response = await fetchWithTimeout(`https://bongacams.com/tools/amf.php?t=${Date.now()}`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -438,6 +643,14 @@
       fetchBongaRoomData,
       fetchBongaRoomDetails,
       normalizeBongaModelsResponse
+    },
+    stripchatApi: {
+      fetchStripchatModelStatus,
+      fetchStripchatModels,
+      fetchStripchatModelsByUsernames,
+      fetchStripchatModelsPage,
+      fetchStripchatSnapshots,
+      normalizeStripchatModelsResponse
     }
   };
 })(globalThis);

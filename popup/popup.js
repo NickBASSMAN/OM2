@@ -4,18 +4,19 @@ const exportBtn = document.getElementById("exportBtn");
 const addBtn = document.getElementById("addModelBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const previewPlayer = document.getElementById("previewPlayer");
+const THUMBNAIL_REFRESH_MS = 60 * 1000;
+let thumbnailRefreshTimer = null;
 const {
   buildModelId,
   buildChaturbateJpegPreviewUrl,
   createModelFromIdentity,
   defaultProfileUrl,
   getCleanString,
-  getPersonIdFromModel,
-  inferSiteFromUrl,
   normalizeLinkedRoomIdentity,
   normalizeModelIdentity,
   parseModelFromUrl
 } = globalThis.OnlineModeli.sites;
+const { buildExportPayload, normalizeImportedModels } = globalThis.OnlineModeli.modelIo;
 
 init();
 
@@ -25,7 +26,7 @@ async function init() {
   addBtn.addEventListener("click", addCurrentModel);
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
-    await requestUpdateAllModels();
+    await requestUpdateAllModels({ force: true });
     await renderModels();
     refreshBtn.disabled = false;
   });
@@ -46,10 +47,11 @@ async function init() {
   }
 
   await renderModels();
+  startThumbnailRefreshTimer();
 
   // Request update of all models when popup opens.
   // The UI will re-render from storage.onChanged when background writes fresh data.
-  requestUpdateAllModels();
+  requestUpdateAllModels({ reason: "popup_open" });
 }
 
 function handleStorageChange(changes, areaName) {
@@ -117,11 +119,16 @@ function renderModel(model) {
   img.className = "thumb";
 
   const fallback = browser.runtime.getURL("icons/offline.jpg");
+  const thumbnailUrl = getSafeMediaUrl(model.thumbnailUrl);
 
-  img.src = getSafeMediaUrl(model.thumbnailUrl) || fallback;
+  if (shouldRefreshThumbnail(model, thumbnailUrl)) {
+    img.dataset.thumbnailUrl = thumbnailUrl;
+    img.src = buildRefreshingMediaUrl(thumbnailUrl);
+  } else {
+    img.src = thumbnailUrl || fallback;
+  }
 
   img.onerror = () => {
-    img.onerror = null;
     img.src = fallback;
   };
 
@@ -320,6 +327,36 @@ function getSafeMediaUrl(url) {
   }
 
   return url;
+}
+
+function shouldRefreshThumbnail(model, url) {
+  return Boolean(
+    url &&
+    model?.status?.online === true &&
+    /^https?:\/\//i.test(url)
+  );
+}
+
+function buildRefreshingMediaUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("_om_thumb", String(Date.now()));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function startThumbnailRefreshTimer() {
+  if (thumbnailRefreshTimer) return;
+
+  thumbnailRefreshTimer = setInterval(refreshVisibleThumbnails, THUMBNAIL_REFRESH_MS);
+}
+
+function refreshVisibleThumbnails() {
+  document.querySelectorAll("img.thumb[data-thumbnail-url]").forEach((img) => {
+    img.src = buildRefreshingMediaUrl(img.dataset.thumbnailUrl);
+  });
 }
 
 function startPreviewPlayer(model, anchor, previewUrl) {
@@ -559,10 +596,12 @@ function getInitialPreviewUrl(model, modelData = {}) {
   return "";
 }
 
-async function requestUpdateAllModels() {
+async function requestUpdateAllModels(options = {}) {
   try {
     const response = await browser.runtime.sendMessage({
-      type: "REQUEST_UPDATE_ALL_MODELS"
+      type: "REQUEST_UPDATE_ALL_MODELS",
+      force: Boolean(options.force),
+      reason: options.reason || ""
     });
     if (!response?.success) {
       console.warn("Update all models request failed", response?.error);
@@ -579,23 +618,10 @@ async function importModelsFromJson() {
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
-    const rawModels = Array.isArray(parsed) ? parsed : parsed?.models;
-
-    if (!Array.isArray(rawModels)) {
-      throw new Error("JSON must be an array or an object with a models array");
-    }
-
-    const normalized = rawModels
-      .map(normalizeImportedModel)
-      .filter(Boolean);
-
-    if (!normalized.length) {
-      throw new Error("No valid model entries found");
-    }
-
-    await browser.storage.local.set({ models: dedupeModelsById(normalized) });
+    const importedModels = normalizeImportedModels(parsed);
+    await browser.storage.local.set({ models: importedModels });
     await renderModels();
-    await requestUpdateAllModels();
+    await requestUpdateAllModels({ force: true, reason: "import" });
   } catch (error) {
     console.error("Import failed:", error);
     alert(`Import failed: ${error?.message || "invalid JSON format"}.`);
@@ -632,151 +658,6 @@ async function exportModelsToJson() {
       .slice(0, 220);
     alert(`Export failed: ${message}.`);
   }
-}
-
-function buildExportPayload(models) {
-  return {
-    version: 4,
-    exportedAt: new Date().toISOString(),
-    models: (models || [])
-      .map((model) => {
-        const username = getCleanString(model?.username);
-        const roomUrl = getCleanString(model?.profileUrl || model?.roomUrl || model?.url);
-        if (!username || !roomUrl) return null;
-
-        const site = getCleanString(model?.site) || inferSiteFromUrl(roomUrl);
-        const lastOnlineAt = getCleanString(
-          model?.status?.lastBroadcast || model?.status?.startDtUtc
-        );
-
-        const personId = getPersonIdFromModel(model);
-        const displayName = getCleanString(model?.displayName);
-
-        return {
-          username,
-          roomUrl,
-          ...(site ? { site } : {}),
-          ...(personId ? { personId } : {}),
-          ...(displayName && displayName !== username ? { displayName } : {}),
-          ...(model.linkedRooms?.length ? { linkedRooms: buildExportLinkedRooms(model.linkedRooms) } : {}),
-          ...(lastOnlineAt ? { lastOnlineAt } : {})
-        };
-      })
-      .filter(Boolean)
-  };
-}
-
-function buildExportLinkedRooms(rooms) {
-  return (rooms || [])
-    .map(normalizeLinkedRoomIdentity)
-    .filter(Boolean)
-    .map((room) => ({
-      site: room.site,
-      username: room.username,
-      roomUrl: room.profileUrl
-    }));
-}
-
-function normalizeImportedModel(model) {
-  if (!model || typeof model !== "object") return null;
-  const identity = resolveImportedIdentity(model);
-  if (!identity) return null;
-
-  const { site, username, id, profileUrl, personId, displayName } = identity;
-
-  return {
-    id,
-    site,
-    username,
-    ...(personId ? { personId } : {}),
-    displayName,
-    addedAt: Number(model.addedAt) || Date.now(),
-    profileUrl,
-    thumbnailUrl: typeof model.thumbnailUrl === "string" ? model.thumbnailUrl : "",
-    previewUrl: typeof model.previewUrl === "string" ? model.previewUrl : "",
-    linkedRooms: normalizeImportedLinkedRooms(model.linkedRooms || model.links),
-    primaryRoomStatus: model.primaryRoomStatus || null,
-    status: {
-      online: Boolean(model.status?.online),
-      showType: model.status?.showType || model.status?.roomStatus || "offline",
-      viewers: Number(model.status?.viewers) || 0,
-      startDtUtc: model.status?.startDtUtc || null,
-      startTimestamp: model.status?.startTimestamp || null,
-      roomStatus: model.status?.roomStatus || model.status?.showType || "offline",
-      lastBroadcast: model.status?.lastBroadcast || null,
-      timeSinceLastBroadcast: model.status?.timeSinceLastBroadcast || null
-    }
-  };
-}
-
-function normalizeImportedLinkedRooms(rooms) {
-  if (!Array.isArray(rooms)) return [];
-
-  return rooms
-    .map((room) => {
-      const normalized = normalizeLinkedRoomIdentity({
-        ...room,
-        profileUrl: room.profileUrl || room.roomUrl || room.url
-      });
-      return normalized;
-    })
-    .filter(Boolean);
-}
-
-function resolveImportedIdentity(model) {
-  const siteRaw = typeof model.site === "string" ? model.site.trim() : "";
-  const usernameRaw = typeof model.username === "string" ? model.username.trim() : "";
-  const roomUrlRaw = getCleanString(model.roomUrl || model.profileUrl || model.url);
-  if (siteRaw && usernameRaw) {
-    return {
-      site: siteRaw,
-      username: usernameRaw,
-      id: buildModelId(siteRaw, usernameRaw),
-      personId: getPersonIdFromModel(model),
-      displayName: getCleanString(model.displayName) || usernameRaw,
-      profileUrl: roomUrlRaw || defaultProfileUrl(siteRaw, usernameRaw)
-    };
-  }
-
-  if (typeof model.id === "string" && model.id.includes(":")) {
-    const [idSite, ...rest] = model.id.split(":");
-    const idUsername = rest.join(":").trim();
-    if (idSite && idUsername) {
-      return {
-        site: idSite.trim(),
-        username: idUsername,
-        id: buildModelId(idSite.trim(), idUsername),
-        personId: getPersonIdFromModel(model),
-        displayName: getCleanString(model.displayName) || idUsername,
-        profileUrl: roomUrlRaw || defaultProfileUrl(idSite.trim(), idUsername)
-      };
-    }
-  }
-
-  if (roomUrlRaw) {
-    const parsed = parseModelFromUrl(roomUrlRaw);
-    if (parsed) {
-      return {
-        site: parsed.site,
-        username: parsed.username,
-        id: buildModelId(parsed.site, parsed.username),
-        personId: getPersonIdFromModel(model),
-        displayName: getCleanString(model.displayName) || parsed.username,
-        profileUrl: parsed.url
-      };
-    }
-  }
-
-  return null;
-}
-
-function dedupeModelsById(models) {
-  const map = new Map();
-  models.forEach((model) => {
-    const normalized = normalizeModelIdentity(model);
-    if (normalized) map.set(normalized.id, normalized);
-  });
-  return [...map.values()];
 }
 
 function pickJsonFile() {
