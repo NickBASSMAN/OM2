@@ -1,3 +1,4 @@
+// Parses Chaturbate room data into a standardized format for the application.
 export function parseChaturbateRoom(room) {
   return {
     id: `chaturbate:${room.username}`,
