@@ -1,7 +1,7 @@
 const fileInput = document.getElementById("fileInput");
 const importBtn = document.getElementById("importBtn");
 const statusEl = document.getElementById("status");
-const { normalizeImportedModels } = globalThis.OnlineModeli.modelIo;
+const { parseImportedModelsText } = globalThis.OnlineModeli.modelIo;
 
 importBtn.addEventListener("click", importModelsFile);
 
@@ -16,8 +16,7 @@ async function importModelsFile() {
 
   try {
     const text = await file.text();
-    const parsed = JSON.parse(text);
-    const importedModels = normalizeImportedModels(parsed);
+    const importedModels = parseImportedModelsText(text);
 
     await browser.storage.local.set({ models: importedModels });
     requestUpdateAllModels();
@@ -25,7 +24,7 @@ async function importModelsFile() {
     setStatus(`Imported ${importedModels.length} model(s).`, "ok");
     await closeCurrentTabAfterDelay(1500);
   } catch (error) {
-    console.error("Import failed:", error);
+    console.warn("Import skipped:", error);
     setStatus(`Import failed: ${error?.message || "invalid JSON format"}.`, "error");
   }
 }

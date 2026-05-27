@@ -19,15 +19,58 @@ body.waiting {
 
 #controls {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.toolbarSites,
+.toolbarActions {
+  display: flex;
+  align-items: center;
+}
+
+.toolbarSiteIcon {
+  width: 27px;
+  height: 27px;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  background-color: #222;
+  background-image: url("../icons/pbuttons.png");
+  background-repeat: no-repeat;
+  background-size: 280px auto;
+  flex-shrink: 0;
+}
+
+.toolbarSiteIcon + .toolbarSiteIcon,
+.toolbarActions button + button {
+  margin-left: 4px;
+}
+
+.toolbarSiteIcon:hover {
+  background-color: #333;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+  filter: brightness(1.08);
+}
+
+.toolbarSiteIcon-chaturbate {
+  background-position: -254px 0;
+}
+
+.toolbarSiteIcon-bongacams {
+  background-position: -203px 0;
+}
+
+.toolbarSiteIcon-stripchat {
+  background-position: -228.5px 0;
 }
 
 #addModelBtn {
   --button-rotation: 0deg;
   --button-scale: 1;
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 27px;
 
   border: none;
   cursor: pointer;
@@ -37,10 +80,10 @@ body.waiting {
   background-image: url("../icons/pbuttons.png");
   background-repeat: no-repeat;
 
-  /* 🔴 КЛЮЧОВЕ: піджени під свій sprite */
+
   background-size: 280px auto;
 
-  /* перша іконка */
+  /* first icon */
   background-position: 2px 0;
   box-shadow: 0 0 0 rgba(0, 0, 0, 0);
   transform: rotate(var(--button-rotation)) scale(var(--button-scale));
@@ -87,7 +130,6 @@ body.waiting {
   background-repeat: no-repeat;
   background-size: 280px auto;
   background-position: center;
-  margin-left: 4px;
   box-shadow: 0 0 0 rgba(0, 0, 0, 0);
   transform: rotate(var(--button-rotation)) scale(var(--button-scale));
   transition:

@@ -16,7 +16,8 @@ const {
   normalizeModelIdentity,
   parseModelFromUrl
 } = globalThis.OnlineModeli.sites;
-const { buildExportPayload, normalizeImportedModels } = globalThis.OnlineModeli.modelIo;
+const { buildExportPayload, parseImportedModelsText } = globalThis.OnlineModeli.modelIo;
+const MODEL_DATA_TIMEOUT_MS = 1200;
 
 init();
 
@@ -24,6 +25,11 @@ async function init() {
   importBtn.addEventListener("click", openImportPage);
   exportBtn.addEventListener("click", exportModelsToJson);
   addBtn.addEventListener("click", addCurrentModel);
+  document.querySelectorAll(".toolbarSiteIcon[data-site-url]").forEach((button) => {
+    button.addEventListener("click", () => {
+      browser.tabs.create({ url: button.dataset.siteUrl });
+    });
+  });
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
     await requestUpdateAllModels({ force: true });
@@ -397,7 +403,7 @@ function formatStreamTime(status) {
 
   const timestamp = status.online
     ? (parseUtcDate(status.startDtUtc) || parseUnixSeconds(status.startTimestamp) || parseUtcDate(status.lastBroadcast))
-    : (parseUtcDate(status.lastBroadcast) || parseUnixSeconds(status.startTimestamp));
+    : (parseUtcDate(status.lastSeenOnlineAt) || parseUtcDate(status.lastBroadcast) || parseUnixSeconds(status.startTimestamp));
 
   if (!timestamp) return "--.--.-- --:--";
 
@@ -414,6 +420,7 @@ function parseUnixSeconds(seconds) {
   if (!seconds) return null;
   const numeric = Number(seconds);
   if (!Number.isFinite(numeric)) return null;
+  if (numeric > 100000000000) return numeric;
   return numeric * 1000;
 }
 
@@ -459,24 +466,7 @@ async function addCurrentModel() {
 
   if (models.some(m => m.id === buildModelId(parsed.site, parsed.username))) return;
 
-  // Request model data from content script
-  let modelData = null;
-  try {
-    modelData = await browser.tabs.sendMessage(tab.id, {
-      type: "GET_MODEL_DATA"
-    });
-  } catch (error) {
-    console.error("Failed to get model data from content script:", error);
-    // Fallback to basic data if content script communication fails
-    modelData = {
-      site: parsed.site,
-      username: parsed.username,
-      online: false,
-      thumbnailUrl: "",
-      previewUrl: "",
-      viewers: 0
-    };
-  }
+  const modelData = await getCurrentRoomModelData(tab.id, parsed, "model");
 
   const model = createModelFromIdentity(parsed, modelData);
   if (!model) return;
@@ -525,22 +515,7 @@ async function addCurrentRoomLinkToModel(modelId) {
     return;
   }
 
-  let modelData = null;
-  try {
-    modelData = await browser.tabs.sendMessage(tab.id, {
-      type: "GET_MODEL_DATA"
-    });
-  } catch (error) {
-    console.error("Failed to get linked room data from content script:", error);
-    modelData = {
-      site: parsed.site,
-      username: parsed.username,
-      online: false,
-      thumbnailUrl: "",
-      previewUrl: "",
-      viewers: 0
-    };
-  }
+  const modelData = await getCurrentRoomModelData(tab.id, parsed, "linked room");
 
   const linkedRoom = normalizeLinkedRoomIdentity({
     id: roomId,
@@ -585,6 +560,63 @@ async function addCurrentRoomLinkToModel(modelId) {
   }
 }
 
+async function getCurrentRoomModelData(tabId, parsed, label = "model") {
+  const fallback = createOfflineModelData(parsed);
+
+  try {
+    const response = await withTimeout(
+      browser.tabs.sendMessage(tabId, { type: "GET_MODEL_DATA" }),
+      MODEL_DATA_TIMEOUT_MS
+    );
+
+    if (!response || typeof response !== "object") return fallback;
+
+    return {
+      ...fallback,
+      ...response,
+      site: response.site || parsed.site,
+      username: response.username || parsed.username,
+      online: Boolean(response.online)
+    };
+  } catch (error) {
+    console.error(`Failed to get ${label} data from content script:`, error);
+    return fallback;
+  }
+}
+
+function createOfflineModelData(parsed) {
+  return {
+    site: parsed.site,
+    username: parsed.username,
+    online: false,
+    showType: "offline",
+    roomStatus: "offline",
+    thumbnailUrl: "",
+    previewUrl: "",
+    viewers: 0,
+    startDtUtc: null,
+    startTimestamp: null,
+    lastBroadcast: null,
+    timeSinceLastBroadcast: null
+  };
+}
+
+function withTimeout(promise, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error("Timed out while reading room data"));
+    }, timeoutMs);
+
+    Promise.resolve(promise).then((value) => {
+      clearTimeout(timeoutId);
+      resolve(value);
+    }).catch((error) => {
+      clearTimeout(timeoutId);
+      reject(error);
+    });
+  });
+}
+
 function getInitialPreviewUrl(model, modelData = {}) {
   const previewUrl = typeof modelData.previewUrl === "string" ? modelData.previewUrl : "";
   if (previewUrl) return previewUrl;
@@ -617,13 +649,12 @@ async function importModelsFromJson() {
 
   try {
     const text = await file.text();
-    const parsed = JSON.parse(text);
-    const importedModels = normalizeImportedModels(parsed);
+    const importedModels = parseImportedModelsText(text);
     await browser.storage.local.set({ models: importedModels });
     await renderModels();
     await requestUpdateAllModels({ force: true, reason: "import" });
   } catch (error) {
-    console.error("Import failed:", error);
+    console.warn("Import skipped:", error);
     alert(`Import failed: ${error?.message || "invalid JSON format"}.`);
   }
 }

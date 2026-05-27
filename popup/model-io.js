@@ -12,6 +12,22 @@
 
   const EXPORT_VERSION = 5;
 
+  function parseImportedModelsText(text) {
+    const rawText = typeof text === "string" ? text : "";
+    if (!rawText.trim()) {
+      throw new Error("Import file is empty");
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      throw new Error("Import file is not valid JSON");
+    }
+
+    return normalizeImportedModels(parsed);
+  }
+
   function getRawModels(payload) {
     return Array.isArray(payload) ? payload : payload?.models;
   }
@@ -239,7 +255,8 @@
     ...(global.OnlineModeli || {}),
     modelIo: {
       buildExportPayload,
-      normalizeImportedModels
+      normalizeImportedModels,
+      parseImportedModelsText
     }
   };
 })(globalThis);

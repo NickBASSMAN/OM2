@@ -415,12 +415,20 @@
     return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
   }
 
+  function toUnixSeconds(isoString) {
+    const timestamp = Date.parse(isoString);
+    return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null;
+  }
+
   function buildStripchatPayload(room, previousStatus = {}) {
     if (!room) return buildOfflineStripchatPayload(previousStatus);
 
     const online = room.online !== false;
     const roomStatus = normalizeStripchatRoomStatus(room.status, online);
     const statusChangedAt = parseIsoDate(room.statusChangedAt);
+    const lastSeenOnlineAt = online
+      ? new Date().toISOString()
+      : (statusChangedAt || previousStatus.lastSeenOnlineAt || null);
 
     return {
       thumbnailUrl: room.thumbnail || "",
@@ -430,13 +438,11 @@
       viewers: online ? toFiniteCount(room.viewers, 0) : 0,
       showType: roomStatus,
       roomStatus,
-      startDtUtc: statusChangedAt,
-      startTimestamp: statusChangedAt ? Date.parse(statusChangedAt) : null,
-      lastBroadcast: null,
+      startDtUtc: online ? statusChangedAt : null,
+      startTimestamp: online ? toUnixSeconds(statusChangedAt) : null,
+      lastBroadcast: online ? null : lastSeenOnlineAt,
       timeSinceLastBroadcast: null,
-      lastSeenOnlineAt: online
-        ? new Date().toISOString()
-        : (previousStatus.lastSeenOnlineAt || null),
+      lastSeenOnlineAt,
       platformData: {
         stripchat: {
           streamName: room.streamName || room.username || null
