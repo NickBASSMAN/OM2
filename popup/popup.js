@@ -555,7 +555,7 @@ function formatStreamTime(status) {
 
   if (!timestamp) return "--.--.-- --:--";
 
-  return formatDateInKyivTime(timestamp);
+  return formatDateInUserTimeZone(timestamp);
 }
 
 function parseUtcDate(isoString) {
@@ -572,10 +572,9 @@ function parseUnixSeconds(seconds) {
   return numeric * 1000;
 }
 
-function formatDateInKyivTime(timestampMs) {
+function formatDateInUserTimeZone(timestampMs) {
   const date = new Date(timestampMs);
   const formatter = new Intl.DateTimeFormat("uk-UA", {
-    timeZone: "Europe/Kyiv", // Kyiv timezone supporting DST
     year: "2-digit",
     month: "2-digit",
     day: "2-digit",

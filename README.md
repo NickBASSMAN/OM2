@@ -38,7 +38,7 @@ Versioning rules:
 
 * Optimized Chaturbate update loop by restricting the roomlist directory scan to models known to be online from basic check, and added a search limit of 10 pages (top 1000 rooms)
 * Optimized local storage write logic in background service by checking for deep differences before saving, which avoids redundant badge updates and rendering cycles
-* Fixed summer/winter time (DST) shifts in Kyiv stream timing logs by replacing the fixed `"Etc/GMT-2"` timezone configuration with `"Europe/Kyiv"`
+* Stream timing is shown in each user's automatically detected local time zone, including daylight-saving changes
 * Implemented DOM Reconciliation (DOM-diffing and element reuse) in the popup panel, preventing layout flickering and thumbnail reloading, while preserving scroll position and active controls
 
 ### 0.3.7
