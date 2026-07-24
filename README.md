@@ -140,7 +140,9 @@ Firefox temporary install:
 * Shared site API code lives in `core/api.js`
 * Per-site background behavior lives in `sites/background-adapters.js`
 * Import/export normalization lives in `popup/model-io.js`
-* Popup image preview uses `imageplayer.js`
+* Popup startup wiring lives in `popup/popup.js`
+* Popup rendering, storage actions, and hover previews live in `popup/rendering.js`, `popup/actions.js`, and `popup/preview.js`
+* Popup image playback uses `imageplayer.js`
 
 ## Limitations
 
