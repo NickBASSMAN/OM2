@@ -134,6 +134,8 @@
 
     nextModels.forEach((model, index) => {
       if (model.site !== "chaturbate") return;
+      // OPTIMIZATION: Only search for models that were detected as online in Phase 1 (bio context check)
+      if (model.status?.online !== true) return;
 
       const usernameKey = getChaturbateUsernameKey(model.username);
       if (!usernameKey) return;
@@ -151,40 +153,26 @@
     let offset = 0;
     let onlineCount = Infinity;
     const limit = 100;
+    const MAX_CHATURBATE_PAGES = 10; // OPTIMIZATION: Limit requests to top 1000 rooms
 
-    while (offset < onlineCount && targetUsernames.size) {
+    while (offset < onlineCount && targetUsernames.size && (offset / limit) < MAX_CHATURBATE_PAGES) {
       const page = await chaturbateApi.fetchRoomsPage(offset, limit);
       onlineCount = page.onlineCount;
 
       page.rooms.forEach((room) => {
-        const usernameKey = getChaturbateUsernameKey(room.username);
-        if (!targetUsernames.has(usernameKey)) return;
-        const indexes = usernameToIndexes.get(usernameKey) || [];
-        indexes.forEach((index) => patchChaturbateModelFromRoom(nextModels[index], room, true));
-        targetUsernames.delete(usernameKey);
+         const usernameKey = getChaturbateUsernameKey(room.username);
+         if (!targetUsernames.has(usernameKey)) return;
+         const indexes = usernameToIndexes.get(usernameKey) || [];
+         indexes.forEach((index) => patchChaturbateModelFromRoom(nextModels[index], room, true));
+         targetUsernames.delete(usernameKey);
       });
 
       offset += limit;
     }
 
-    targetUsernames.forEach((usernameKey) => {
-      const indexes = usernameToIndexes.get(usernameKey) || [];
-      indexes.forEach((index) => {
-        const roomStatus = getPreservedChaturbateOfflineStatus(nextModels[index].status);
-        nextModels[index] = {
-          ...nextModels[index],
-          status: normalizeModelStatus(nextModels[index].status, {
-            online: false,
-            viewers: 0,
-            showType: roomStatus,
-            roomStatus
-          })
-        };
-      });
-    });
-
     return nextModels;
   }
+
 
   function normalizeBongaRoomStatus(status) {
     if (status === "free") return "public";

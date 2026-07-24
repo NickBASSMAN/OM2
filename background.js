@@ -190,6 +190,46 @@ function getModelsIdentityKey(models) {
   }).join("|");
 }
 
+function areModelsEqual(modelsA, modelsB) {
+  if (modelsA.length !== modelsB.length) return false;
+  for (let i = 0; i < modelsA.length; i++) {
+    const a = modelsA[i];
+    const b = modelsB[i];
+    if (a.id !== b.id) return false;
+    if (a.thumbnailUrl !== b.thumbnailUrl) return false;
+    if (a.previewUrl !== b.previewUrl) return false;
+    if (a.displayName !== b.displayName) return false;
+    if (a.profileUrl !== b.profileUrl) return false;
+    if (a.status?.online !== b.status?.online) return false;
+    if (a.status?.viewers !== b.status?.viewers) return false;
+    if (a.status?.showType !== b.status?.showType) return false;
+    if (a.status?.roomStatus !== b.status?.roomStatus) return false;
+    if (a.status?.startDtUtc !== b.status?.startDtUtc) return false;
+    if (a.status?.startTimestamp !== b.status?.startTimestamp) return false;
+    if (a.status?.lastBroadcast !== b.status?.lastBroadcast) return false;
+    if (a.status?.timeSinceLastBroadcast !== b.status?.timeSinceLastBroadcast) return false;
+    if (a.status?.lastSeenOnlineAt !== b.status?.lastSeenOnlineAt) return false;
+
+    const lrA = a.linkedRooms || [];
+    const lrB = b.linkedRooms || [];
+    if (lrA.length !== lrB.length) return false;
+    for (let j = 0; j < lrA.length; j++) {
+      const rA = lrA[j];
+      const rB = lrB[j];
+      if (rA.id !== rB.id) return false;
+      if (rA.thumbnailUrl !== rB.thumbnailUrl) return false;
+      if (rA.previewUrl !== rB.previewUrl) return false;
+      if (rA.displayName !== rB.displayName) return false;
+      if (rA.profileUrl !== rB.profileUrl) return false;
+      if (rA.status?.online !== rB.status?.online) return false;
+      if (rA.status?.viewers !== rB.status?.viewers) return false;
+      if (rA.status?.showType !== rB.status?.showType) return false;
+      if (rA.status?.roomStatus !== rB.status?.roomStatus) return false;
+    }
+  }
+  return true;
+}
+
 async function performUpdateAllModelsOnce() {
   const startData = await browser.storage.local.get("models");
   const startModels = (startData.models || [])
@@ -209,7 +249,10 @@ async function performUpdateAllModelsOnce() {
     return { skipped: true, reason: "models_changed" };
   }
 
-  await browser.storage.local.set({ models: phaseOneModels });
+  // OPTIMIZATION: Only save if phaseOneModels are actually different from startModels
+  if (!areModelsEqual(startModels, phaseOneModels)) {
+    await browser.storage.local.set({ models: phaseOneModels });
+  }
 
   const phaseTwoModels = await enrichTrackedRooms(phaseOneModels);
   const latestAfterPhaseOneData = await browser.storage.local.get("models");
@@ -222,12 +265,25 @@ async function performUpdateAllModelsOnce() {
     return { updated: true, phaseOneOnly: true, count: phaseOneModels.length };
   }
 
-  await browser.storage.local.set({
-    models: phaseTwoModels,
-    [MODELS_UPDATED_AT_KEY]: Date.now()
-  });
+  // OPTIMIZATION: Only save models array if phaseTwoModels are different from the current saved models (which might be phaseOneModels)
+  const currentSavedData = await browser.storage.local.get("models");
+  const currentSavedModels = (currentSavedData.models || [])
+    .map(normalizeModelIdentity)
+    .filter(Boolean);
+
+  if (!areModelsEqual(currentSavedModels, phaseTwoModels)) {
+    await browser.storage.local.set({
+      models: phaseTwoModels,
+      [MODELS_UPDATED_AT_KEY]: Date.now()
+    });
+  } else {
+    await browser.storage.local.set({
+      [MODELS_UPDATED_AT_KEY]: Date.now()
+    });
+  }
   return { updated: true, count: phaseTwoModels.length };
 }
+
 
 async function shouldSkipAutomaticUpdate(message = {}) {
   if (message.force) return false;
@@ -238,7 +294,26 @@ async function shouldSkipAutomaticUpdate(message = {}) {
   if (!models.length) return true;
 
   const lastUpdatedAt = Number(data[MODELS_UPDATED_AT_KEY]) || 0;
-  return Date.now() - lastUpdatedAt < AUTO_UPDATE_TTL_MS;
+  const isFresh = Date.now() - lastUpdatedAt < AUTO_UPDATE_TTL_MS;
+  // Return "lightweight" instead of true — caller will do a viewers-only refresh
+  return isFresh ? "lightweight" : false;
+}
+
+async function performLightweightViewersUpdate() {
+  const data = await browser.storage.local.get("models");
+  const models = (data.models || [])
+    .map(normalizeModelIdentity)
+    .filter(Boolean);
+
+  if (!models.length) return { skipped: true, reason: "no_models" };
+
+  const updatedModels = await enrichTrackedRooms(models);
+
+  if (!areModelsEqual(models, updatedModels)) {
+    await browser.storage.local.set({ models: updatedModels });
+  }
+
+  return { updated: true, lightweight: true, count: updatedModels.length };
 }
 
 async function runUpdateAllQueue(options = {}) {
@@ -388,6 +463,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "REQUEST_UPDATE_ALL_MODELS") {
     shouldSkipAutomaticUpdate(message).then((skip) => {
+      if (skip === "lightweight") return performLightweightViewersUpdate();
       if (skip) return { skipped: true, reason: "fresh_cache" };
       return runUpdateAllQueue({
         queueIfInFlight: message.force || message.reason !== "popup_open"

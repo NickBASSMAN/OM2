@@ -74,14 +74,45 @@ async function renderModels() {
     .map(normalizeModelIdentity)
     .filter(Boolean);
 
-  container.innerHTML = "";
-
   if (!models.length) {
     container.innerHTML = "<div>No models</div>";
     return;
   }
 
-  sortModelsForDisplay(models).forEach(renderModel);
+  // Remove "No models" placeholder if it was there
+  if (container.firstElementChild && !container.firstElementChild.classList.contains("model")) {
+    container.innerHTML = "";
+  }
+
+  const sortedModels = sortModelsForDisplay(models);
+  const activeIds = new Set(sortedModels.map(m => m.id));
+
+  // Remove elements for deleted models
+  const existingElements = Array.from(container.querySelectorAll(".model"));
+  existingElements.forEach((el) => {
+    const modelId = el.dataset.modelId;
+    if (!activeIds.has(modelId)) {
+      el.remove();
+    }
+  });
+
+  // Render or update elements in sorted order
+  sortedModels.forEach((model) => {
+    let el = null;
+    for (let i = 0; i < container.children.length; i++) {
+      if (container.children[i].dataset.modelId === model.id) {
+        el = container.children[i];
+        break;
+      }
+    }
+    if (el) {
+      updateModelElement(el, model);
+      container.appendChild(el); // Moves to the end to maintain sorted order
+    } else {
+      el = createModelElement(model);
+      container.appendChild(el);
+    }
+  });
 }
 
 function sortModelsForDisplay(models) {
@@ -106,9 +137,11 @@ function getAddedAt(model) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function renderModel(model) {
+function createModelElement(model) {
   const el = document.createElement("div");
   el.className = "model";
+  el.dataset.modelId = model.id;
+  el.dataset.profileUrl = model.profileUrl;
 
   const roomStatus = (model.status?.roomStatus || model.status?.showType || "").toLowerCase();
   const isPrivate = roomStatus === "private";
@@ -127,12 +160,15 @@ function renderModel(model) {
   const fallback = browser.runtime.getURL("icons/offline.jpg");
   const thumbnailUrl = getSafeMediaUrl(model.thumbnailUrl);
 
+  let initialSrc = fallback;
   if (shouldRefreshThumbnail(model, thumbnailUrl)) {
     img.dataset.thumbnailUrl = thumbnailUrl;
-    img.src = buildRefreshingMediaUrl(thumbnailUrl);
+    initialSrc = buildRefreshingMediaUrl(thumbnailUrl);
   } else {
-    img.src = thumbnailUrl || fallback;
+    initialSrc = thumbnailUrl || fallback;
   }
+  img.src = initialSrc;
+  img.dataset.originalSrc = initialSrc;
 
   img.onerror = () => {
     img.src = fallback;
@@ -141,11 +177,16 @@ function renderModel(model) {
   const previewUrl = getModelPreviewUrl(model);
   if (previewUrl) {
     thumbWrap.classList.add("previewEnabled");
-    thumbWrap.addEventListener("mouseenter", (event) => {
-      event.stopPropagation();
-      startPreviewPlayer(model, thumbWrap, previewUrl);
-    });
+    thumbWrap.dataset.previewUrl = previewUrl;
   }
+
+  thumbWrap.addEventListener("mouseenter", (event) => {
+    event.stopPropagation();
+    const currentPreviewUrl = thumbWrap.dataset.previewUrl;
+    if (currentPreviewUrl) {
+      startPreviewPlayer(model, thumbWrap, currentPreviewUrl);
+    }
+  });
 
   thumbWrap.appendChild(img);
 
@@ -207,7 +248,7 @@ function renderModel(model) {
   addLinkBtn.title = "Add current room link to this model";
   addLinkBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    await addCurrentRoomLinkToModel(model.id);
+    await addCurrentRoomLinkToModel(el.dataset.modelId || model.id);
   });
 
   const deleteBtn = document.createElement("button");
@@ -216,10 +257,10 @@ function renderModel(model) {
   deleteBtn.addEventListener("click", async (e) => {
     e.stopPropagation(); // prevent opening profile
     const data = await browser.storage.local.get("models");
-    const models = (data.models || [])
+    const modelsList = (data.models || [])
       .map(normalizeModelIdentity)
       .filter(Boolean);
-    const filtered = models.filter(m => m.id !== model.id);
+    const filtered = modelsList.filter(m => m.id !== (el.dataset.modelId || model.id));
     await browser.storage.local.set({ models: filtered });
     await requestUpdateAllModels();
     await renderModels();
@@ -231,10 +272,117 @@ function renderModel(model) {
   el.appendChild(deleteBtn);
 
   el.addEventListener("click", () => {
-    browser.tabs.create({ url: model.profileUrl });
+    browser.tabs.create({ url: el.dataset.profileUrl || model.profileUrl });
   });
 
-  container.appendChild(el);
+  return el;
+}
+
+function updateModelElement(el, model) {
+  el.dataset.profileUrl = model.profileUrl;
+
+  const roomStatus = (model.status?.roomStatus || model.status?.showType || "").toLowerCase();
+  const isPrivate = roomStatus === "private";
+  const isPassword = roomStatus === "password";
+
+  if (isPrivate) {
+    el.classList.add("privateModel");
+  } else {
+    el.classList.remove("privateModel");
+  }
+
+  const thumbWrap = el.querySelector(".thumbWrap");
+  if (thumbWrap) {
+    const img = thumbWrap.querySelector(".thumb");
+    if (img) {
+      const fallback = browser.runtime.getURL("icons/offline.jpg");
+      const thumbnailUrl = getSafeMediaUrl(model.thumbnailUrl);
+      let newSrc = fallback;
+      if (shouldRefreshThumbnail(model, thumbnailUrl)) {
+        img.dataset.thumbnailUrl = thumbnailUrl;
+        newSrc = buildRefreshingMediaUrl(thumbnailUrl);
+      } else {
+        delete img.dataset.thumbnailUrl;
+        newSrc = thumbnailUrl || fallback;
+      }
+      if (img.dataset.originalSrc !== newSrc) {
+        img.dataset.originalSrc = newSrc;
+        img.src = newSrc;
+      }
+    }
+
+    // Update overlay
+    let overlay = thumbWrap.querySelector(".thumbPrivateOverlay, .thumbPasswordOverlay");
+    if (isPrivate || isPassword) {
+      const expectedClass = isPassword ? "thumbPasswordOverlay" : "thumbPrivateOverlay";
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = expectedClass;
+        thumbWrap.appendChild(overlay);
+      } else if (overlay.className !== expectedClass) {
+        overlay.className = expectedClass;
+      }
+    } else if (overlay) {
+      overlay.remove();
+    }
+
+    // Update previewUrl
+    const previewUrl = getModelPreviewUrl(model);
+    if (previewUrl) {
+      thumbWrap.classList.add("previewEnabled");
+      thumbWrap.dataset.previewUrl = previewUrl;
+    } else {
+      thumbWrap.classList.remove("previewEnabled");
+      delete thumbWrap.dataset.previewUrl;
+    }
+  }
+
+  const name = el.querySelector(".name");
+  if (name) {
+    if (isPrivate) {
+      name.className = "name privateName";
+    } else {
+      name.className = "name";
+    }
+
+    const username = name.querySelector("span:not(.roomIcons)");
+    if (username) {
+      username.textContent = getModelDisplayName(model);
+    }
+
+    const roomIcons = name.querySelector(".roomIcons");
+    if (roomIcons) {
+      roomIcons.innerHTML = "";
+      getModelRooms(model).forEach((room) => {
+        roomIcons.appendChild(createRoomIcon(room));
+      });
+    }
+  }
+
+  const status = el.querySelector(".status");
+  if (status) {
+    const showType = model.status?.roomStatus || model.status?.showType;
+    const isOnline = model.status?.online;
+    const isRegion = roomStatus === "region";
+    const isRoomPass = roomStatus === "room pass";
+    const statusClass = isPassword || isRegion || isRoomPass ? "warningStatus" : (isOnline ? "online" : "offline");
+    status.className = "status " + statusClass;
+
+    if (isPassword || isRegion || isRoomPass) {
+      status.textContent = `${showType.toUpperCase()} (${model.status.viewers || 0})`;
+    } else if (isOnline) {
+      status.textContent = showType
+        ? `${showType.toUpperCase()} (${model.status.viewers || 0})`
+        : `ONLINE (${model.status.viewers || 0})`;
+    } else {
+      status.textContent = "OFFLINE";
+    }
+  }
+
+  const streamTime = el.querySelector(".streamTime");
+  if (streamTime) {
+    streamTime.textContent = formatStreamTime(model.status);
+  }
 }
 
 function getModelDisplayName(model) {
@@ -407,7 +555,7 @@ function formatStreamTime(status) {
 
   if (!timestamp) return "--.--.-- --:--";
 
-  return formatDateInUtcPlus2(timestamp);
+  return formatDateInKyivTime(timestamp);
 }
 
 function parseUtcDate(isoString) {
@@ -424,10 +572,10 @@ function parseUnixSeconds(seconds) {
   return numeric * 1000;
 }
 
-function formatDateInUtcPlus2(timestampMs) {
+function formatDateInKyivTime(timestampMs) {
   const date = new Date(timestampMs);
   const formatter = new Intl.DateTimeFormat("uk-UA", {
-    timeZone: "Etc/GMT-2", // Fixed UTC+2
+    timeZone: "Europe/Kyiv", // Kyiv timezone supporting DST
     year: "2-digit",
     month: "2-digit",
     day: "2-digit",
