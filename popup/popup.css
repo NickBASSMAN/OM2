@@ -97,6 +97,7 @@ body.waiting {
 #addModelBtn:hover,
 #importBtn:hover,
 #exportBtn:hover,
+#clearStorageBtn:hover,
 #refreshBtn:hover {
   background-color: #333;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
@@ -107,6 +108,7 @@ body.waiting {
 #addModelBtn:active,
 #importBtn:active,
 #exportBtn:active,
+#clearStorageBtn:active,
 #refreshBtn:active,
 .addLinkBtn:active,
 .deleteBtn:active {
@@ -118,6 +120,7 @@ body.waiting {
 
 #importBtn,
 #exportBtn,
+#clearStorageBtn,
 #refreshBtn {
   --button-rotation: 0deg;
   --button-scale: 1;
@@ -148,6 +151,27 @@ body.waiting {
   background-image: url("../icons/corner.gif");
   background-size: 16px 16px;
   --button-rotation: 180deg;
+}
+
+#clearStorageBtn {
+  font-size: 14px;
+  line-height: 1;
+  color: #ccc;
+  background-image: none;
+  background-color: #222;
+}
+
+#clearStorageBtn::after {
+  content: "🗑";
+}
+
+#clearStorageBtn:hover {
+  color: #ff6b6b;
+}
+
+#clearStorageBtn:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 #refreshBtn {

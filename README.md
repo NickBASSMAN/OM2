@@ -29,6 +29,7 @@ Versioning rules:
 * Hover supported thumbnails to preview a refreshed image stream
 * Open the display room or any linked room directly from the popup
 * Import and export model lists as JSON
+* Clear cached extension state and force a fresh status update without removing the saved model list
 * Periodic background refresh with popup badge count
 * Popup-open refresh throttling to avoid unnecessary API traffic
 
@@ -71,6 +72,7 @@ Workflow:
 3. Open the same model's room on another supported site.
 4. Press the add-link button on the existing popup row.
 5. The room is saved under the same model unless it is already linked.
+6. Use the remove button to remove linked rooms one at a time; after the final link is removed, it removes the primary model.
 
 The popup shows a site icon for each room. Each icon reflects that room's own status and opens that exact room when clicked.
 
@@ -129,6 +131,7 @@ Firefox temporary install:
 5. Hover a thumbnail to preview when preview is supported.
 6. Click a model row or a site icon to open the corresponding room.
 7. Use the import/export buttons in the popup toolbar to move model lists between installs.
+8. Use the cache-clear button to discard saved status metadata and request a fresh update while keeping the model list.
 
 ## Technical Notes
 
@@ -136,6 +139,7 @@ Firefox temporary install:
 * JavaScript only
 * Stores data in `browser.storage.local`
 * Background scripts load `shared/sites.js`, `core/api.js`, `sites/background-adapters.js`, then `background.js`
+* Background refreshes use site adapters to update primary and linked rooms, then choose the display room from the latest linked-room summary
 * Shared site parsing and model normalization live in `shared/sites.js`
 * Shared site API code lives in `core/api.js`
 * Per-site background behavior lives in `sites/background-adapters.js`
@@ -143,12 +147,14 @@ Firefox temporary install:
 * Popup startup wiring lives in `popup/popup.js`
 * Popup rendering, storage actions, and hover previews live in `popup/rendering.js`, `popup/actions.js`, and `popup/preview.js`
 * Popup image playback uses `imageplayer.js`
+* The extension currently has no automated test suite; syntax checks are used as a basic verification step
 
 ## Limitations
 
 * External site APIs can change or block requests without notice
 * Stripchat and BongaCams requests can be affected by Cloudflare/session availability
-* Stripchat support currently uses listing/snapshot endpoints rather than a dedicated per-room endpoint
+* Stripchat support relies on undocumented listing, snapshot, and room-page endpoints that can change without notice
+* A cached popup-open refresh may briefly show the last known status while the background update is in progress
 * No stream recording functionality
 * Manual temporary install only at this stage
 

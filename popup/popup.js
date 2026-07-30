@@ -1,6 +1,7 @@
 const importBtn = document.getElementById("importBtn");
 const exportBtn = document.getElementById("exportBtn");
 const addBtn = document.getElementById("addModelBtn");
+const clearStorageBtn = document.getElementById("clearStorageBtn");
 const refreshBtn = document.getElementById("refreshBtn");
 const { popupActions, popupPreview, popupRendering } = globalThis.OnlineModeli;
 
@@ -14,6 +15,7 @@ async function init() {
     button.addEventListener("click", () => browser.tabs.create({ url: button.dataset.siteUrl }));
   });
   refreshBtn.addEventListener("click", refreshModels);
+  clearStorageBtn.addEventListener("click", clearStorage);
   browser.storage.onChanged.addListener(handleStorageChange);
 
   popupPreview.setupPreviewPlayer();
@@ -29,6 +31,15 @@ async function refreshModels() {
     await popupRendering.renderModels();
   } finally {
     refreshBtn.disabled = false;
+  }
+}
+
+async function clearStorage() {
+  clearStorageBtn.disabled = true;
+  try {
+    await popupActions.clearStorage();
+  } finally {
+    clearStorageBtn.disabled = false;
   }
 }
 

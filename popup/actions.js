@@ -84,8 +84,34 @@
   async function deleteModel(modelId) {
     const data = await browser.storage.local.get("models");
     const models = (data.models || []).map(normalizeModelIdentity).filter(Boolean);
-    await browser.storage.local.set({ models: models.filter((model) => model.id !== modelId) });
+    const index = models.findIndex((model) => model.id === modelId);
+
+    if (index === -1) return;
+
+    const model = models[index];
+    const linkedRooms = model.linkedRooms || [];
+
+    if (linkedRooms.length > 0) {
+      // Remove the last added linked room
+      models[index] = { ...model, linkedRooms: linkedRooms.slice(0, -1) };
+    } else {
+      // No linked rooms left — remove the entire model
+      models.splice(index, 1);
+    }
+
+    await browser.storage.local.set({ models });
     await requestUpdateAllModels();
+    await renderModels();
+  }
+
+  async function clearStorage() {
+    // Preserve the models list, wipe everything else
+    const data = await browser.storage.local.get("models");
+    const models = (data.models || []).map(normalizeModelIdentity).filter(Boolean);
+    await browser.storage.local.clear();
+    await browser.storage.local.set({ models });
+    // Force a full refresh so statuses are re-fetched from scratch
+    await requestUpdateAllModels({ force: true, reason: "cache_cleared" });
     await renderModels();
   }
 
@@ -229,6 +255,7 @@
     popupActions: {
       addCurrentModel,
       addCurrentRoomLinkToModel,
+      clearStorage,
       deleteModel,
       exportModelsToJson,
       openImportPage,
